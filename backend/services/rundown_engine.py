@@ -56,10 +56,34 @@ class RundownEngine:
             return None
 
     async def set_active_rundown(self, rundown_id: UUID) -> None:
-        r = await self._ensure_redis()
-        await r.set(self.active_key, str(rundown_id))
-        self._live_started_at = utcnow()
-        await self._publish_state()
+        async with self._lock:
+            r = await self._ensure_redis()
+            raw_prev = await r.get(self.active_key)
+            prev_id: UUID | None = None
+            if raw_prev:
+                try:
+                    prev_id = UUID(str(raw_prev))
+                except ValueError:
+                    prev_id = None
+            await asyncio.to_thread(self._sync_set_active_rundown, prev_id, rundown_id)
+            await r.set(self.active_key, str(rundown_id))
+            self._live_started_at = utcnow()
+            await self._publish_state()
+
+    def _sync_set_active_rundown(self, prev_id: UUID | None, new_id: UUID) -> None:
+        """Close out the previous active rundown and reset the target rundown for a clean switch."""
+        with Session(get_engine()) as session:
+            if prev_id and prev_id != new_id:
+                stmt = select(Story).where(Story.rundown_id == prev_id)
+                for s in session.exec(stmt).all():
+                    if s.status == "live":
+                        s.status = "done"
+                        session.add(s)
+            stmt = select(Story).where(Story.rundown_id == new_id)
+            for s in session.exec(stmt).all():
+                s.status = "pending"
+                session.add(s)
+            session.commit()
 
     async def start(self) -> None:
         if self._pubsub_task and not self._pubsub_task.done():
@@ -81,10 +105,18 @@ class RundownEngine:
             self._redis = None
 
     async def _publish_state(self) -> None:
-        r = await self._ensure_redis()
-        active_id = await self.get_active_rundown_id()
-        snap = await asyncio.to_thread(self._build_snapshot_sync, active_id, self._live_started_at)
-        await r.publish(self.state_channel, json.dumps(snap))
+        active_id: UUID | None = None
+        try:
+            r = await self._ensure_redis()
+            active_id = await self.get_active_rundown_id()
+            snap = await asyncio.to_thread(self._build_snapshot_sync, active_id, self._live_started_at)
+            await r.publish(self.state_channel, json.dumps(snap))
+        except Exception:
+            log.exception(
+                "publishing rundown state to Redis failed (channel=%s active_id=%s)",
+                self.state_channel,
+                active_id,
+            )
 
     def _build_snapshot_sync(
         self,

@@ -74,6 +74,8 @@ def build_function_command(
     for key, value in kwargs.items():
         if value is None:
             continue
+        if str(key).lower() == "input":
+            continue
         parts.append(f"{key}={quote(str(value), safe='')}")
     query = "&".join(parts)
     if query:
@@ -172,11 +174,16 @@ class VmixBridge:
             log.warning("vMix connect failed: %s", e)
             return False
         assert self._writer is not None
-        for cmd in (b"SUBSCRIBE TALLY\r\n", b"SUBSCRIBE ACTS\r\n"):
-            self._writer.write(cmd)
-        await self._writer.drain()
-        log.info("Connected to vMix at %s:%s", self.host, self.port)
-        return True
+        try:
+            for cmd in (b"SUBSCRIBE TALLY\r\n", b"SUBSCRIBE ACTS\r\n"):
+                self._writer.write(cmd)
+            await self._writer.drain()
+            log.info("Connected to vMix at %s:%s", self.host, self.port)
+            return True
+        except Exception:
+            log.exception("vMix subscribe handshake failed")
+            await self._close_connection()
+            return False
 
     async def _run_forever(self) -> None:
         delay = 1.0

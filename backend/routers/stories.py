@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, func, select
 
 from database import get_session
@@ -52,7 +53,14 @@ def create_story(
     session.add(story)
     session.flush()
     session.add(Script(story_id=story.id, body=""))
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Position {pos} already taken in this rundown",
+        ) from None
     session.refresh(story)
     return story
 
@@ -78,7 +86,14 @@ def update_story(
     for k, v in data.items():
         setattr(s, k, v)
     session.add(s)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Story update conflicts with existing position in this rundown",
+        ) from None
     session.refresh(s)
     return s
 

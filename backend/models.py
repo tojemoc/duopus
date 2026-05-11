@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 from typing import Optional
 from uuid import UUID, uuid4
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -22,6 +23,7 @@ class Rundown(SQLModel, table=True):
 
 class Story(SQLModel, table=True):
     __tablename__ = "story"
+    __table_args__ = (UniqueConstraint("rundown_id", "position", name="uq_story_rundown_position"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     rundown_id: UUID = Field(foreign_key="rundown.id", index=True)

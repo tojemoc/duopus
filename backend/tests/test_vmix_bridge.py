@@ -30,6 +30,13 @@ def test_build_function_command_extra_params():
     assert b"SelectedName=" in cmd
 
 
+def test_build_function_command_skips_input_kwarg():
+    cmd = build_function_command("Cut", input=1, Input=2, Foo="x")
+    assert cmd.count(b"Input=") == 1
+    assert b"Input=1" in cmd
+    assert b"Foo=" in cmd
+
+
 @pytest.mark.asyncio
 async def test_bridge_publish_skipped_without_redis(monkeypatch):
     """Smoke: parse path only; full bridge needs TCP."""

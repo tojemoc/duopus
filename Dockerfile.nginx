@@ -1,14 +1,14 @@
 FROM node:20-alpine AS rundown-build
 WORKDIR /app
 COPY frontend/rundown-ui/package.json frontend/rundown-ui/package-lock.json* ./frontend/rundown-ui/
-RUN cd frontend/rundown-ui && npm install
+RUN cd frontend/rundown-ui && npm ci
 COPY frontend/rundown-ui ./frontend/rundown-ui
 RUN cd frontend/rundown-ui && npm run build
 
 FROM node:20-alpine AS prompter-build
 WORKDIR /app
 COPY frontend/prompter/package.json frontend/prompter/package-lock.json* ./frontend/prompter/
-RUN cd frontend/prompter && npm install
+RUN cd frontend/prompter && npm ci
 COPY frontend/prompter ./frontend/prompter
 RUN cd frontend/prompter && npm run build
 
