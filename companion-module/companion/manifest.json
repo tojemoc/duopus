@@ -1,0 +1,22 @@
+{
+  "id": "duopus-nrcs",
+  "name": "duopus",
+  "shortname": "duopus",
+  "description": "Control Duopus NRCS (rundown, vMix bridge, prompter speed)",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": "git+https://github.com/example/duopus.git",
+  "bugs": "https://github.com/example/duopus/issues",
+  "maintainers": [{ "name": "Duopus", "email": "dev@example.com" }],
+  "runtime": {
+    "type": "node18",
+    "api": "nodejs-ipc",
+    "apiVersion": "1.12.0",
+    "entrypoint": "../src/index.js"
+  },
+  "legacyIds": [],
+  "manufacturer": "Duopus",
+  "products": ["NRCS"],
+  "keywords": ["duopus", "nrcs", "vmix"],
+  "isPrerelease": true
+}

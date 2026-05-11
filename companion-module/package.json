@@ -1,0 +1,15 @@
+{
+  "name": "duopus-companion",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "lint": "node --check src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@companion-module/base": "~1.12.0"
+  }
+}

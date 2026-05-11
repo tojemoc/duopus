@@ -1,0 +1,52 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #020617;
+  color: #e2e8f0;
+  font-family: system-ui, sans-serif;
+}
+.hud {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  pointer-events: none;
+  z-index: 5;
+  font-size: 0.9rem;
+  text-shadow: 0 1px 2px #000;
+}
+.controls {
+  pointer-events: auto;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+button {
+  cursor: pointer;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0.35rem 0.55rem;
+}
+button.active {
+  background: #2563eb;
+  border-color: #1d4ed8;
+}
+.scroll-wrap {
+  height: 100%;
+  overflow: hidden;
+  padding: 4rem 8vw 3rem;
+  box-sizing: border-box;
+}
+.script {
+  font-size: clamp(1.6rem, 3.2vw, 3rem);
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
