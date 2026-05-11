@@ -103,6 +103,13 @@ export default function App() {
           setScript(live.script_body || "");
           setTitle(live.title);
           plannedRef.current = live.planned_duration || 0;
+        } else {
+          lastStoryId.current = null;
+          velocityRef.current = 0;
+          if (scrollRef.current) scrollRef.current.scrollTop = 0;
+          setScript("Waiting for rundown…");
+          setTitle("");
+          plannedRef.current = 0;
         }
         elapsedBaseRef.current = snap.elapsed_seconds || 0;
         wallAtRef.current = performance.now();

@@ -35,6 +35,12 @@ def create_story(
         stmt = select(func.max(Story.position)).where(Story.rundown_id == rundown_id)
         max_pos = session.exec(stmt).one()
         pos = (max_pos or 0) + 1
+    else:
+        clash = session.exec(
+            select(Story.id).where(Story.rundown_id == rundown_id, Story.position == pos)
+        ).first()
+        if clash:
+            raise HTTPException(status_code=409, detail=f"Position {pos} already taken in this rundown")
     story = Story(
         rundown_id=rundown_id,
         position=pos,
@@ -44,11 +50,10 @@ def create_story(
         vmix_input=body.vmix_input,
     )
     session.add(story)
+    session.flush()
+    session.add(Script(story_id=story.id, body=""))
     session.commit()
     session.refresh(story)
-    script = Script(story_id=story.id, body="")
-    session.add(script)
-    session.commit()
     return story
 
 
@@ -98,10 +103,7 @@ def get_script(story_id: UUID, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Story not found")
     sc = session.exec(select(Script).where(Script.story_id == story_id)).first()
     if not sc:
-        sc = Script(story_id=story_id, body="")
-        session.add(sc)
-        session.commit()
-        session.refresh(sc)
+        raise HTTPException(status_code=404, detail="Script not found")
     return {"story_id": str(story_id), "body": sc.body, "updated_at": sc.updated_at.isoformat()}
 
 

@@ -190,8 +190,8 @@ class RundownEngine:
             return True
 
     async def on_program_input(self, program_input: int | None) -> None:
-        active_id = await self.get_active_rundown_id()
         async with self._lock:
+            active_id = await self.get_active_rundown_id()
             changed = await asyncio.to_thread(
                 self._sync_on_program_input_with_timer,
                 active_id,
@@ -216,17 +216,20 @@ class RundownEngine:
         await pubsub.subscribe(self.tally_channel)
         try:
             while not self._stop.is_set():
-                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                if not msg or msg.get("type") != "message":
-                    continue
                 try:
+                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if not msg or msg.get("type") != "message":
+                        continue
                     data = json.loads(msg["data"])
+                    program_input = data.get("program_input")
+                    if program_input is not None:
+                        program_input = int(program_input)
+                    await self.on_program_input(program_input)
                 except json.JSONDecodeError:
                     continue
-                program_input = data.get("program_input")
-                if program_input is not None:
-                    program_input = int(program_input)
-                await self.on_program_input(program_input)
+                except Exception:
+                    log.exception("Failed to process vmix:tally message")
+                    continue
         finally:
             await pubsub.unsubscribe(self.tally_channel)
             await pubsub.aclose()
@@ -278,8 +281,8 @@ class RundownEngine:
             return True
 
     async def advance(self) -> bool:
-        active_id = await self.get_active_rundown_id()
         async with self._lock:
+            active_id = await self.get_active_rundown_id()
             changed = await asyncio.to_thread(self._sync_advance_with_timer, active_id)
         if changed:
             await self._publish_state()
@@ -300,8 +303,8 @@ class RundownEngine:
             return session.exec(stmt).first() is not None
 
     async def go_to_story(self, story_id: UUID) -> bool:
-        active_id = await self.get_active_rundown_id()
         async with self._lock:
+            active_id = await self.get_active_rundown_id()
             changed = await asyncio.to_thread(self._sync_go_to_story_with_timer, active_id, story_id)
         if changed:
             await self._publish_state()

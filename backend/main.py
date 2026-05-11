@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
-from fastapi import FastAPI, WebSocket, WebSocketQuery
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
@@ -21,32 +21,40 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     get_engine()
     app.state.redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
-    bridge = VmixBridge(
-        host=settings.vmix_host,
-        port=settings.vmix_port,
-        redis_url=settings.redis_url,
-    )
+    bridge = VmixBridge(host=settings.vmix_host, port=settings.vmix_port, redis_url=settings.redis_url)
     engine = RundownEngine(redis_url=settings.redis_url)
     hub = WebSocketHub(redis_url=settings.redis_url)
     app.state.vmix_bridge = bridge
     app.state.rundown_engine = engine
     app.state.ws_hub = hub
-    await hub.start()
-    await bridge.start()
-    await engine.start()
-    log.info("Duopus backend started (vMix host=%s)", settings.vmix_host)
-    yield
-    await engine.stop()
-    await bridge.stop()
-    await hub.stop()
-    await app.state.redis_client.aclose()
+
+    started_hub = False
+    started_bridge = False
+    started_engine = False
+    try:
+        await hub.start()
+        started_hub = True
+        await bridge.start()
+        started_bridge = True
+        await engine.start()
+        started_engine = True
+        log.info("Duopus backend started (vMix host=%s)", settings.vmix_host)
+        yield
+    finally:
+        if started_engine:
+            await engine.stop()
+        if started_bridge:
+            await bridge.stop()
+        if started_hub:
+            await hub.stop()
+        await app.state.redis_client.aclose()
 
 
 app = FastAPI(title="Duopus NRCS", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

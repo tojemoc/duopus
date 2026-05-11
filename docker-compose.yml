@@ -2,9 +2,9 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: duopus
-      POSTGRES_PASSWORD: duopus
-      POSTGRES_DB: duopus
+      POSTGRES_USER: ${POSTGRES_USER?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-duopus}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -31,13 +31,13 @@ services:
       redis:
         condition: service_healthy
     environment:
-      POSTGRES_URL: ${POSTGRES_URL:-postgresql+psycopg://duopus:duopus@db:5432/duopus}
+      POSTGRES_URL: ${POSTGRES_URL?set POSTGRES_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       VMIX_HOST: ${VMIX_HOST:-host.docker.internal}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   nginx:
     build:
@@ -46,7 +46,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "80:80"
+      - "80:8080"
 
 volumes:
   pgdata:

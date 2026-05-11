@@ -4,6 +4,7 @@ class DuopusModule extends InstanceBase {
   constructor(internal) {
     super(internal)
     this.pollTimer = null
+    this._destroyed = false
     this.lastSnap = null
     this.lastVmix = null
   }
@@ -26,14 +27,24 @@ class DuopusModule extends InstanceBase {
   }
 
   async destroy() {
-    if (this.pollTimer) clearInterval(this.pollTimer)
+    this._destroyed = true
+    if (this.pollTimer) clearTimeout(this.pollTimer)
+    this.pollTimer = null
   }
 
   async requestJson(path, options = {}) {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      ...options,
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    })
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 2000)
+    let res
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        signal: ctrl.signal,
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      })
+    } finally {
+      clearTimeout(t)
+    }
     if (!res.ok) {
       const t = await res.text()
       throw new Error(`${res.status} ${t}`)
@@ -57,8 +68,9 @@ class DuopusModule extends InstanceBase {
       this.log('debug', `poll: ${e.message}`)
       return
     }
-    const live = this.lastSnap.live_story
-    const elapsed = this.lastSnap.elapsed_seconds || 0
+    if (!this.lastSnap) return
+    const live = this.lastSnap?.live_story
+    const elapsed = this.lastSnap?.elapsed_seconds || 0
     const planned = live?.planned_duration || 0
     const rem = Math.max(0, planned - elapsed)
     this.setVariableValues({
@@ -199,8 +211,15 @@ class DuopusModule extends InstanceBase {
       },
     })
 
-    this.pollTimer = setInterval(() => this.poll().catch((e) => this.log('error', e.message)), 1000)
-    await this.poll()
+    const tick = async () => {
+      try {
+        await this.poll()
+      } catch (e) {
+        this.log('error', e.message)
+      }
+      if (!this._destroyed) this.pollTimer = setTimeout(tick, 1000)
+    }
+    tick()
   }
 }
 

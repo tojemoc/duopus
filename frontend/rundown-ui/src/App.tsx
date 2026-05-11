@@ -107,21 +107,39 @@ export default function App() {
   }, [activeId, loadStories]);
 
   useEffect(() => {
-    const ws = new WebSocket(wsUrl("rundown-ui"));
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data as string);
-      if (msg.type === "bootstrap") {
-        setSnap(msg.rundown as RundownSnapshot);
-        setVmix(msg.vmix as Record<string, unknown>);
-      }
-      if (msg.type === "rundown") {
-        setSnap(msg.payload as RundownSnapshot);
-      }
-      if (msg.type === "vmix") {
-        setVmix((prev) => ({ ...(prev || {}), tally: msg.payload }));
-      }
+    let ws: WebSocket | null = null;
+    let retry: number | null = null;
+    let closed = false;
+
+    const connect = () => {
+      ws = new WebSocket(wsUrl("rundown-ui"));
+      ws.onmessage = (ev) => {
+        let msg: any;
+        try {
+          msg = JSON.parse(ev.data as string);
+        } catch {
+          return;
+        }
+        if (msg.type === "bootstrap") {
+          setSnap(msg.rundown as RundownSnapshot);
+          setVmix(msg.vmix as Record<string, unknown>);
+        } else if (msg.type === "rundown") {
+          setSnap(msg.payload as RundownSnapshot);
+        } else if (msg.type === "vmix") {
+          setVmix((prev) => ({ ...(prev || {}), tally: msg.payload }));
+        }
+      };
+      ws.onclose = () => {
+        if (!closed) retry = window.setTimeout(connect, 2000);
+      };
     };
-    return () => ws.close();
+
+    connect();
+    return () => {
+      closed = true;
+      if (retry) window.clearTimeout(retry);
+      ws?.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -169,8 +187,11 @@ export default function App() {
     if (oldIndex < 0 || newIndex < 0) return;
     const next = arrayMove(stories, oldIndex, newIndex).map((s, i) => ({ ...s, position: i + 1 }));
     setStories(next);
+    const minIndex = Math.min(oldIndex, newIndex);
+    const maxIndex = Math.max(oldIndex, newIndex);
+    const updates = next.filter((s, i) => i >= minIndex && i <= maxIndex && s.position !== stories[i]?.position);
     await Promise.all(
-      next.map((s) =>
+      updates.map((s) =>
         api(`/api/stories/${s.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -99,6 +100,7 @@ class VmixBridge:
         self._redis: aioredis.Redis | None = None
         self._tally = VmixTallyState()
         self._lock = asyncio.Lock()
+        self._redis_lock = asyncio.Lock()
         self._run_task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
 
@@ -141,14 +143,17 @@ class VmixBridge:
 
     async def _ensure_redis(self) -> aioredis.Redis:
         if self._redis is None:
-            self._redis = aioredis.from_url(self.redis_url, decode_responses=True)
+            async with self._redis_lock:
+                if self._redis is None:
+                    self._redis = aioredis.from_url(self.redis_url, decode_responses=True)
         return self._redis
 
     async def _publish_tally(self) -> None:
-        r = await self._ensure_redis()
-        import json
-
-        await r.publish(self.tally_channel, json.dumps(self._tally.to_pub_dict()))
+        try:
+            r = await self._ensure_redis()
+            await r.publish(self.tally_channel, json.dumps(self._tally.to_pub_dict()))
+        except Exception:
+            log.exception("publishing tally to Redis failed; keeping vMix link up")
 
     async def _handle_line(self, line: str) -> None:
         parsed = parse_tally_ok_line(line)
@@ -197,6 +202,8 @@ class VmixBridge:
                 log.exception("vMix read loop error")
             finally:
                 await self._close_connection()
+                if self._stop.is_set():
+                    break
                 await asyncio.sleep(delay)
                 delay = min(max_delay, delay * 2)
 

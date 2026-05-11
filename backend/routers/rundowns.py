@@ -70,8 +70,8 @@ def delete_rundown(rundown_id: UUID, session: Session = Depends(get_session)):
 @router.post("/{rundown_id}/activate")
 async def activate_rundown(
     rundown_id: UUID,
-    session: Session = Depends(get_session),
     engine: RundownEngineDep,
+    session: Session = Depends(get_session),
 ):
     r = session.get(Rundown, rundown_id)
     if not r:

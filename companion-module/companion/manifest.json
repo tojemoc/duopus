@@ -5,8 +5,8 @@
   "description": "Control Duopus NRCS (rundown, vMix bridge, prompter speed)",
   "version": "0.1.0",
   "license": "MIT",
-  "repository": "git+https://github.com/example/duopus.git",
-  "bugs": "https://github.com/example/duopus/issues",
+  "repository": "git+https://github.com/tojemoc/duopus.git",
+  "bugs": "https://github.com/tojemoc/duopus/issues",
   "maintainers": [{ "name": "Duopus", "email": "dev@example.com" }],
   "runtime": {
     "type": "node18",
