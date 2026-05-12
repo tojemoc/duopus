@@ -134,6 +134,10 @@ class RundownEngine:
                 active_id,
             )
 
+    async def broadcast_snapshot(self) -> None:
+        """Push the latest rundown snapshot to Redis (WebSocket clients, prompter, etc.)."""
+        await self._publish_state()
+
     def _build_snapshot_sync(
         self,
         active_id: UUID | None,
