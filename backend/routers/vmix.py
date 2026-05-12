@@ -15,9 +15,12 @@ def vmix_state(bridge: VmixBridgeDep):
 async def vmix_command(bridge: VmixBridgeDep, body: VmixCommandBody):
     if "input" in body.params:
         raise HTTPException(status_code=422, detail="params contains reserved key: input")
-    status = await bridge.send_command(
-        body.function,
-        input=body.input,
-        **body.params,
-    )
+    try:
+        status = await bridge.send_command(
+            body.function,
+            input=body.input,
+            **body.params,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return {"status": status}

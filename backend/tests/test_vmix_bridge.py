@@ -37,6 +37,21 @@ def test_build_function_command_skips_input_kwarg():
     assert b"Foo=" in cmd
 
 
+def test_build_function_command_rejects_invalid_function_name():
+    with pytest.raises(ValueError, match="function name"):
+        build_function_command("Cut Bad")
+
+
+def test_build_function_command_rejects_invalid_param_key():
+    with pytest.raises(ValueError, match="parameter name"):
+        build_function_command("Cut", input=1, **{"Bad Key": "x"})
+
+
+def test_build_function_command_coerces_string_input():
+    cmd = build_function_command("Cut", input=" 3 ")
+    assert b"Input=3" in cmd
+
+
 @pytest.mark.asyncio
 async def test_bridge_publish_skipped_without_redis(monkeypatch):
     """Smoke: parse path only; full bridge needs TCP."""

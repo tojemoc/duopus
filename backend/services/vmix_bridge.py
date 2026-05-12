@@ -15,6 +15,7 @@ import redis.asyncio as aioredis
 log = logging.getLogger(__name__)
 
 TALLY_OK_RE = re.compile(r"^TALLY OK (.+)$")
+_VMIX_NAME_TOKEN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 @dataclass
@@ -62,26 +63,56 @@ def parse_tally_ok_line(line: str) -> VmixTallyState | None:
     )
 
 
+def _validate_vmix_token(label: str, token: str) -> None:
+    if not token or not _VMIX_NAME_TOKEN.fullmatch(token):
+        raise ValueError(f"invalid vMix {label}: {token!r} (allowed: letters, digits, underscore, hyphen)")
+
+
+def _coerce_vmix_input_number(input: Any) -> int | None:  # noqa: A002
+    if input is None:
+        return None
+    if isinstance(input, bool):
+        raise ValueError("invalid vMix input: boolean is not allowed")
+    if isinstance(input, int):
+        if input < 1:
+            raise ValueError("invalid vMix input: must be a positive integer")
+        return int(input)
+    if isinstance(input, str):
+        s = input.strip()
+        if not s.isdigit():
+            raise ValueError(f"invalid vMix input: {input!r}")
+        n = int(s)
+        if n < 1:
+            raise ValueError("invalid vMix input: must be a positive integer")
+        return n
+    raise ValueError(f"invalid vMix input type: {type(input).__name__}")
+
+
 def build_function_command(
     function_name: str,
     input: int | None = None,  # noqa: A002 — matches vMix / API naming
     **kwargs: Any,
 ) -> bytes:
     """Serialise a vMix shortcut FUNCTION command (TCP / HTTP query-string style)."""
+    fn = function_name.strip()
+    _validate_vmix_token("function name", fn)
+    input_no = _coerce_vmix_input_number(input)
     parts: list[str] = []
-    if input is not None:
-        parts.append(f"Input={input}")
+    if input_no is not None:
+        parts.append(f"Input={input_no}")
     for key, value in kwargs.items():
         if value is None:
             continue
-        if str(key).lower() == "input":
+        ks = str(key)
+        if ks.lower() == "input":
             continue
-        parts.append(f"{key}={quote(str(value), safe='')}")
+        _validate_vmix_token("parameter name", ks)
+        parts.append(f"{ks}={quote(str(value), safe='')}")
     query = "&".join(parts)
     if query:
-        line = f"FUNCTION {function_name} {query}\r\n"
+        line = f"FUNCTION {fn} {query}\r\n"
     else:
-        line = f"FUNCTION {function_name}\r\n"
+        line = f"FUNCTION {fn}\r\n"
     return line.encode("utf-8")
 
 
@@ -134,13 +165,17 @@ class VmixBridge:
             self._redis = None
 
     async def _close_connection(self) -> None:
-        if self._writer:
+        old_writer = self._writer
+        old_reader = self._reader
+        if old_writer is not None:
             try:
-                self._writer.close()
-                await self._writer.wait_closed()
+                old_writer.close()
+                await old_writer.wait_closed()
             except Exception:
                 log.exception("closing vmix writer")
+        if self._writer is old_writer:
             self._writer = None
+        if self._reader is old_reader:
             self._reader = None
 
     async def _ensure_redis(self) -> aioredis.Redis:
@@ -221,13 +256,17 @@ class VmixBridge:
         **kwargs: Any,
     ) -> str:
         """Send a FUNCTION command on the live connection; returns a short status message."""
-        payload = build_function_command(function_name, input=input, **kwargs)
+        try:
+            payload = build_function_command(function_name, input=input, **kwargs)
+        except ValueError:
+            raise
         async with self._lock:
-            if not self._writer:
+            writer = self._writer
+            if not writer:
                 return "disconnected"
             try:
-                self._writer.write(payload)
-                await self._writer.drain()
+                writer.write(payload)
+                await writer.drain()
             except Exception as e:
                 log.warning("send_command failed: %s", e)
                 await self._close_connection()

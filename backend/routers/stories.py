@@ -29,19 +29,15 @@ def create_story(
     body: StoryCreate,
     session: Session = Depends(get_session),
 ):
-    if not session.get(Rundown, rundown_id):
+    lock_stmt = select(Rundown).where(Rundown.id == rundown_id).with_for_update()
+    rd = session.exec(lock_stmt).first()
+    if not rd:
         raise HTTPException(status_code=404, detail="Rundown not found")
     pos = body.position
     if pos is None:
         stmt = select(func.max(Story.position)).where(Story.rundown_id == rundown_id)
         max_pos = session.exec(stmt).one()
         pos = (max_pos or 0) + 1
-    else:
-        clash = session.exec(
-            select(Story.id).where(Story.rundown_id == rundown_id, Story.position == pos)
-        ).first()
-        if clash:
-            raise HTTPException(status_code=409, detail=f"Position {pos} already taken in this rundown")
     story = Story(
         rundown_id=rundown_id,
         position=pos,
@@ -86,13 +82,14 @@ def update_story(
     for k, v in data.items():
         setattr(s, k, v)
     session.add(s)
+    attempted_pos = s.position
     try:
         session.commit()
     except IntegrityError:
         session.rollback()
         raise HTTPException(
             status_code=409,
-            detail="Story update conflicts with existing position in this rundown",
+            detail=f"Position {attempted_pos} already taken in this rundown",
         ) from None
     session.refresh(s)
     return s

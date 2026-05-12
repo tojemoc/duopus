@@ -1,16 +1,18 @@
 FROM node:20-alpine AS rundown-build
-WORKDIR /app
-COPY frontend/rundown-ui/package.json frontend/rundown-ui/package-lock.json* ./frontend/rundown-ui/
-RUN cd frontend/rundown-ui && npm ci
-COPY frontend/rundown-ui ./frontend/rundown-ui
-RUN cd frontend/rundown-ui && npm run build
+WORKDIR /app/frontend/rundown-ui
+COPY frontend/rundown-ui/package.json ./
+COPY frontend/rundown-ui/package-lock.json* ./
+RUN npm ci
+COPY frontend/rundown-ui/ ./
+RUN npm run build
 
 FROM node:20-alpine AS prompter-build
-WORKDIR /app
-COPY frontend/prompter/package.json frontend/prompter/package-lock.json* ./frontend/prompter/
-RUN cd frontend/prompter && npm ci
-COPY frontend/prompter ./frontend/prompter
-RUN cd frontend/prompter && npm run build
+WORKDIR /app/frontend/prompter
+COPY frontend/prompter/package.json ./
+COPY frontend/prompter/package-lock.json* ./
+RUN npm ci
+COPY frontend/prompter/ ./
+RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:alpine
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
