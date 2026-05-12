@@ -5,8 +5,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, func, select
 
 from database import get_session
-from models import Rundown, Script, Story, utcnow
-from schemas import ScriptUpdate, StoryCreate, StoryUpdate
+from models import Rundown, Script, Story, StoryCue, utcnow
+from schemas import ScriptUpdate, StoryCreate, StoryCueReplaceBody, StoryUpdate
 
 router = APIRouter(tags=["stories"])
 
@@ -95,11 +95,41 @@ def update_story(
     return s
 
 
+@router.put("/api/stories/{story_id}/cues")
+def replace_story_cues(
+    story_id: UUID,
+    body: StoryCueReplaceBody,
+    session: Session = Depends(get_session),
+):
+    s = session.get(Story, story_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Story not found")
+    for c in session.exec(select(StoryCue).where(StoryCue.story_id == story_id)).all():
+        session.delete(c)
+    for item in body.cues:
+        session.add(
+            StoryCue(
+                story_id=story_id,
+                position=item.position,
+                title=item.title,
+                body=item.body,
+                vmix_function=item.vmix_function,
+                vmix_input=item.vmix_input,
+                vmix_params=item.vmix_params,
+            )
+        )
+    session.commit()
+    stmt = select(StoryCue).where(StoryCue.story_id == story_id).order_by(col(StoryCue.position))
+    return list(session.exec(stmt).all())
+
+
 @router.delete("/api/stories/{story_id}")
 def delete_story(story_id: UUID, session: Session = Depends(get_session)):
     s = session.get(Story, story_id)
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
+    for c in session.exec(select(StoryCue).where(StoryCue.story_id == s.id)).all():
+        session.delete(c)
     sc = session.exec(select(Script).where(Script.story_id == s.id)).first()
     if sc:
         session.delete(sc)

@@ -10,7 +10,7 @@ from sqlmodel import Session, SQLModel, col, create_engine, select
 
 import database
 import services.rundown_engine as rundown_engine_mod
-from models import Rundown, Story
+from models import Rundown, Script, Story, StoryCue
 from services.rundown_engine import RundownEngine
 
 
@@ -108,6 +108,61 @@ async def test_advance_selects_first_pending(sqlite_engine):
     assert ok is True
     snap = eng._build_snapshot_sync(rid, eng._live_started_at)  # noqa: SLF001
     assert snap["live_story"]["title"] == "A"
+
+
+@pytest.mark.asyncio
+async def test_next_steps_cues_then_advances_story(sqlite_engine):
+    rid = uuid4()
+    with Session(sqlite_engine) as s:
+        a, _b, _c = _seed(s, rid)
+        s.add(Script(story_id=a, body="FULL SCRIPT"))
+        s.add(
+            StoryCue(
+                story_id=a,
+                position=0,
+                title="H1",
+                body="CUE0",
+                vmix_function="OverlayInput1In",
+                vmix_input=2,
+            )
+        )
+        s.add(StoryCue(story_id=a, position=1, title="SYN", body="CUE1", vmix_function=None))
+        s.commit()
+    eng = RundownEngine(redis_url="redis://localhost:9")
+    eng._sync_set_active_rundown(None, rid)  # noqa: SLF001
+    eng.get_active_rundown_id = AsyncMock(return_value=rid)
+    eng._publish_state = AsyncMock()  # noqa: SLF001
+    eng._live_cue_index = -1
+
+    c1, o1 = await eng.next_step()
+    assert c1 and len(o1) == 1 and o1[0][0] == "OverlayInput1In" and o1[0][1] == 2
+    assert eng._live_cue_index == 0
+
+    c2, o2 = await eng.next_step()
+    assert c2 and o2 == []
+    assert eng._live_cue_index == 1
+
+    c3, o3 = await eng.next_step()
+    assert c3 and o3 == []
+    assert eng._live_cue_index == -1
+    snap = eng._build_snapshot_sync(rid, eng._live_started_at)  # noqa: SLF001
+    assert snap["live_story"] is not None
+    assert snap["live_story"]["title"] == "B"
+
+
+@pytest.mark.asyncio
+async def test_next_without_cues_advances_like_advance(sqlite_engine):
+    rid = uuid4()
+    with Session(sqlite_engine) as s:
+        _seed(s, rid)
+    eng = RundownEngine(redis_url="redis://localhost:9")
+    eng._sync_set_active_rundown(None, rid)  # noqa: SLF001
+    eng.get_active_rundown_id = AsyncMock(return_value=rid)
+    eng._publish_state = AsyncMock()  # noqa: SLF001
+    ok, ops = await eng.next_step()
+    assert ok and ops == []
+    snap = eng._build_snapshot_sync(rid, eng._live_started_at)  # noqa: SLF001
+    assert snap["live_story"]["title"] == "B"
 
 
 @pytest.mark.asyncio

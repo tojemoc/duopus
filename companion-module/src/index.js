@@ -91,10 +91,10 @@ class DuopusModule extends InstanceBase {
 
     this.setActionDefinitions({
       advance_rundown: {
-        name: 'Advance rundown',
+        name: 'Next (sub-story + story + vMix)',
         options: [],
         callback: async () => {
-          await this.requestJson('/api/rundown/advance', { method: 'POST' })
+          await this.requestJson('/api/rundown/next', { method: 'POST' })
         },
       },
       go_live: {

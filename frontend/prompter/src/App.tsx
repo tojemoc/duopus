@@ -6,6 +6,7 @@ type Story = {
   status: string;
   planned_duration: number;
   script_body?: string;
+  prompter_body?: string;
 };
 
 type Snap = {
@@ -96,11 +97,11 @@ export default function App() {
           lastStoryId.current = sid;
           velocityRef.current = 0;
           if (scrollRef.current) scrollRef.current.scrollTop = 0;
-          setScript(live?.script_body || "");
+          setScript(live?.prompter_body ?? live?.script_body || "");
           setTitle(live?.title || "");
           plannedRef.current = live?.planned_duration || 0;
         } else if (live) {
-          setScript(live.script_body || "");
+          setScript(live.prompter_body ?? live.script_body || "");
           setTitle(live.title);
           plannedRef.current = live.planned_duration || 0;
         } else {

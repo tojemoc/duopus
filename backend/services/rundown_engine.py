@@ -13,13 +13,20 @@ import redis.asyncio as aioredis
 from sqlmodel import Session, col, select
 
 from database import get_engine
-from models import Rundown, Script, Story
+from models import Rundown, Script, Story, StoryCue
 
 log = logging.getLogger(__name__)
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _vmix_ops_from_cue(cue: StoryCue) -> list[tuple[str, int | None, dict[str, Any]]]:
+    if not cue.vmix_function or not str(cue.vmix_function).strip():
+        return []
+    params = dict(cue.vmix_params) if cue.vmix_params else {}
+    return [(str(cue.vmix_function).strip(), cue.vmix_input, params)]
 
 
 class RundownEngine:
@@ -38,6 +45,7 @@ class RundownEngine:
         self._pubsub_task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self._live_started_at: datetime | None = None
+        self._live_cue_index: int = -1
         self._lock = asyncio.Lock()
 
     async def _ensure_redis(self) -> aioredis.Redis:
@@ -68,6 +76,7 @@ class RundownEngine:
             await asyncio.to_thread(self._sync_set_active_rundown, prev_id, rundown_id)
             await r.set(self.active_key, str(rundown_id))
             self._live_started_at = utcnow()
+            self._live_cue_index = -1
             await self._publish_state()
 
     def _sync_set_active_rundown(self, prev_id: UUID | None, new_id: UUID) -> None:
@@ -164,6 +173,7 @@ class RundownEngine:
             rows = session.exec(stmt).all()
             stories_out: list[dict[str, Any]] = []
             live_story: dict[str, Any] | None = None
+            live_full_script = ""
             for story, script in rows:
                 body = script.body if script else ""
                 row = {
@@ -180,6 +190,20 @@ class RundownEngine:
                 stories_out.append(row)
                 if story.status == "live":
                     live_story = row
+                    live_full_script = body
+            if live_story:
+                sid = UUID(str(live_story["id"]))
+                cues = self._load_cues(session, sid)
+                idx = self._live_cue_index
+                live_story["live_cue_index"] = idx
+                live_story["live_cue_count"] = len(cues)
+                if cues and 0 <= idx < len(cues):
+                    cue = cues[idx]
+                    live_story["live_cue_title"] = cue.title or None
+                    live_story["prompter_body"] = cue.body.strip() if cue.body.strip() else live_full_script
+                else:
+                    live_story["live_cue_title"] = None
+                    live_story["prompter_body"] = live_full_script
             elapsed = 0
             if live_story and live_started_at:
                 elapsed = max(0, int((utcnow() - live_started_at).total_seconds()))
@@ -198,6 +222,89 @@ class RundownEngine:
     async def get_public_snapshot(self) -> dict[str, Any]:
         active_id = await self.get_active_rundown_id()
         return await asyncio.to_thread(self._build_snapshot_sync, active_id, self._live_started_at)
+
+    def _get_live_story_in_session(self, session: Session, active_id: UUID) -> Story | None:
+        stmt = (
+            select(Story)
+            .where(Story.rundown_id == active_id, Story.status == "live")
+            .order_by(col(Story.position))
+        )
+        return session.exec(stmt).first()
+
+    def _get_live_story_id(self, active_id: UUID | None) -> UUID | None:
+        if not active_id:
+            return None
+        with Session(get_engine()) as session:
+            s = self._get_live_story_in_session(session, active_id)
+            return s.id if s else None
+
+    def _load_cues(self, session: Session, story_id: UUID) -> list[StoryCue]:
+        stmt = select(StoryCue).where(StoryCue.story_id == story_id).order_by(col(StoryCue.position))
+        return list(session.exec(stmt).all())
+
+    def _after_story_advance_chain_first_cue(
+        self,
+        active_id: UUID | None,
+    ) -> tuple[bool, list[tuple[str, int | None, dict[str, Any]]]]:
+        if not active_id:
+            return True, []
+        with Session(get_engine()) as session:
+            live = self._get_live_story_in_session(session, active_id)
+            if not live:
+                return True, []
+            cues2 = self._load_cues(session, live.id)
+        if not cues2:
+            self._live_cue_index = -1
+            return True, []
+        self._live_cue_index = 0
+        return True, _vmix_ops_from_cue(cues2[0])
+
+    def _sync_next_step(self, active_id: UUID | None) -> tuple[bool, list[tuple[str, int | None, dict[str, Any]]]]:
+        """One Stream Deck / operator step: advance cue or story, return vMix FUNCTION ops for this step."""
+        if not active_id:
+            return False, []
+        with Session(get_engine()) as session:
+            live = self._get_live_story_in_session(session, active_id)
+            if not live:
+                return False, []
+            cues = self._load_cues(session, live.id)
+
+        if not cues:
+            self._live_cue_index = -1
+            ok = self._sync_advance(active_id)
+            if not ok:
+                return False, []
+            return self._after_story_advance_chain_first_cue(active_id)
+
+        if self._live_cue_index == -1:
+            self._live_cue_index = 0
+            return True, _vmix_ops_from_cue(cues[0])
+
+        if self._live_cue_index < len(cues) - 1:
+            self._live_cue_index += 1
+            return True, _vmix_ops_from_cue(cues[self._live_cue_index])
+
+        self._live_cue_index = -1
+        ok = self._sync_advance(active_id)
+        if not ok:
+            return False, []
+        return self._after_story_advance_chain_first_cue(active_id)
+
+    async def next_step(self) -> tuple[bool, list[tuple[str, int | None, dict[str, Any]]]]:
+        """Advance one cue or one story; caller sends returned ops to vMix."""
+        async with self._lock:
+            active_id = await self.get_active_rundown_id()
+            prev_live_id = await asyncio.to_thread(self._get_live_story_id, active_id)
+            changed, ops = await asyncio.to_thread(self._sync_next_step, active_id)
+            new_live_id = await asyncio.to_thread(self._get_live_story_id, active_id)
+            if new_live_id != prev_live_id:
+                if new_live_id:
+                    self._live_started_at = utcnow()
+                else:
+                    self._live_started_at = None
+        if changed:
+            await self._publish_state()
+        return changed, ops
 
     def _sync_on_program_input(self, active_id: UUID | None, program_input: int | None) -> bool:
         if not active_id or program_input is None:
@@ -240,11 +347,15 @@ class RundownEngine:
     async def on_program_input(self, program_input: int | None) -> None:
         async with self._lock:
             active_id = await self.get_active_rundown_id()
+            prev_id = await asyncio.to_thread(self._get_live_story_id, active_id)
             changed = await asyncio.to_thread(
                 self._sync_on_program_input_with_timer,
                 active_id,
                 program_input,
             )
+            new_id = await asyncio.to_thread(self._get_live_story_id, active_id)
+            if changed and prev_id != new_id:
+                self._live_cue_index = -1
         if changed:
             await self._publish_state()
 
@@ -339,6 +450,7 @@ class RundownEngine:
     def _sync_advance_with_timer(self, active_id: UUID | None) -> bool:
         changed = self._sync_advance(active_id)
         if changed:
+            self._live_cue_index = -1
             if active_id and self._has_live_story(active_id):
                 self._live_started_at = utcnow()
             else:
@@ -353,7 +465,11 @@ class RundownEngine:
     async def go_to_story(self, story_id: UUID) -> bool:
         async with self._lock:
             active_id = await self.get_active_rundown_id()
+            prev_id = await asyncio.to_thread(self._get_live_story_id, active_id)
             changed = await asyncio.to_thread(self._sync_go_to_story_with_timer, active_id, story_id)
+            new_id = await asyncio.to_thread(self._get_live_story_id, active_id)
+            if changed and prev_id != new_id:
+                self._live_cue_index = -1
         if changed:
             await self._publish_state()
         return changed

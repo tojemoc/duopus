@@ -39,6 +39,19 @@ class ScriptUpdate(BaseModel):
     body: str
 
 
+class StoryCueItem(BaseModel):
+    position: int
+    title: str = ""
+    body: str = ""
+    vmix_function: str | None = None
+    vmix_input: int | None = None
+    vmix_params: dict[str, Any] | None = None
+
+
+class StoryCueReplaceBody(BaseModel):
+    cues: list[StoryCueItem]
+
+
 class VmixCommandBody(BaseModel):
     function: str
     input: int | None = None
