@@ -1,8 +1,32 @@
 # AGENTS.md
 
-## Cursor Cloud specific instructions
+## Duopus NRCS
 
-This is a freshly initialized repository (`duopus`) with no application code, dependencies, or services yet. Future agents should check for newly added `package.json`, `requirements.txt`, or other dependency manifests before attempting installs.
+Docker Compose brings up PostgreSQL 16, Redis 7, the FastAPI backend (with Alembic migrations on startup), and nginx (static `rundown-ui` at `/`, `prompter` at `/prompter/`, proxy `/api` and `/ws` to the backend).
 
-- **No build/lint/test commands exist yet.** Once code is added, update this section with the relevant commands.
-- **No services to start.** Once services are defined, document startup instructions here.
+Copy `.env.example` to `.env` if you want to override defaults locally. Compose sets `POSTGRES_URL`, `REDIS_URL`, and `VMIX_HOST` via the `environment` block; adjust `VMIX_HOST` to your vMix machine’s LAN IP.
+
+### Commands
+
+**Backend (from `backend/`)**
+
+- `python3 -m pip install -r requirements.txt` — install dependencies
+- `python3 -m pytest` — run tests (vMix tally parsing + rundown engine DB logic)
+- `python3 -m uvicorn main:app --reload --host 0.0.0.0 --port 8000` — local API (requires Postgres + Redis + env)
+
+**Database migrations**
+
+- `POSTGRES_URL=... python3 -m alembic upgrade head` — apply migrations (also runs automatically in the backend container entrypoint)
+
+**Frontends**
+
+- `cd frontend/rundown-ui && npm install && npm run build`
+- `cd frontend/prompter && npm install && npm run build`
+
+**Companion module**
+
+- `cd companion-module && npm install && node --check src/index.js`
+
+**Docker**
+
+- `docker compose build` then `docker compose up` from the repo root (requires Docker).

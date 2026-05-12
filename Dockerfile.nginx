@@ -1,0 +1,20 @@
+FROM node:20-alpine AS rundown-build
+WORKDIR /app/frontend/rundown-ui
+COPY frontend/rundown-ui/package.json ./
+COPY frontend/rundown-ui/package-lock.json* ./
+RUN npm ci
+COPY frontend/rundown-ui/ ./
+RUN npm run build
+
+FROM node:20-alpine AS prompter-build
+WORKDIR /app/frontend/prompter
+COPY frontend/prompter/package.json ./
+COPY frontend/prompter/package-lock.json* ./
+RUN npm ci
+COPY frontend/prompter/ ./
+RUN npm run build
+
+FROM nginxinc/nginx-unprivileged:alpine
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
+COPY --from=rundown-build /app/frontend/rundown-ui/dist /usr/share/nginx/html/
+COPY --from=prompter-build /app/frontend/prompter/dist /usr/share/nginx/html/prompter
