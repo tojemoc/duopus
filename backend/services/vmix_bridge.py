@@ -164,9 +164,15 @@ class VmixBridge:
             await self._redis.aclose()
             self._redis = None
 
-    async def _close_connection(self) -> None:
-        old_writer = self._writer
-        old_reader = self._reader
+    async def _close_connection(
+        self,
+        old_writer: asyncio.StreamWriter | None = None,
+        old_reader: asyncio.StreamReader | None = None,
+    ) -> None:
+        if old_writer is None:
+            old_writer = self._writer
+        if old_reader is None:
+            old_reader = self._reader
         if old_writer is not None:
             try:
                 old_writer.close()
@@ -226,6 +232,8 @@ class VmixBridge:
         while not self._stop.is_set():
             ok = await self._connect_once()
             if not ok:
+                if self._stop.is_set():
+                    break
                 await asyncio.sleep(delay)
                 delay = min(max_delay, delay * 2)
                 continue
@@ -244,10 +252,10 @@ class VmixBridge:
                 log.exception("vMix read loop error")
             finally:
                 await self._close_connection()
-                if self._stop.is_set():
-                    break
-                await asyncio.sleep(delay)
-                delay = min(max_delay, delay * 2)
+            if self._stop.is_set():
+                break
+            await asyncio.sleep(delay)
+            delay = min(max_delay, delay * 2)
 
     async def send_command(
         self,
@@ -256,10 +264,7 @@ class VmixBridge:
         **kwargs: Any,
     ) -> str:
         """Send a FUNCTION command on the live connection; returns a short status message."""
-        try:
-            payload = build_function_command(function_name, input=input, **kwargs)
-        except ValueError:
-            raise
+        payload = build_function_command(function_name, input=input, **kwargs)
         async with self._lock:
             writer = self._writer
             if not writer:
@@ -269,6 +274,6 @@ class VmixBridge:
                 await writer.drain()
             except Exception as e:
                 log.warning("send_command failed: %s", e)
-                await self._close_connection()
+                await self._close_connection(old_writer=writer, old_reader=self._reader)
                 return "error"
         return "sent"

@@ -1,6 +1,6 @@
 import pytest
 
-from services.vmix_bridge import build_function_command, parse_tally_ok_line
+from services.vmix_bridge import VmixBridge, build_function_command, parse_tally_ok_line
 
 
 def test_parse_tally_ok_basic():
@@ -54,5 +54,20 @@ def test_build_function_command_coerces_string_input():
 
 @pytest.mark.asyncio
 async def test_bridge_publish_skipped_without_redis(monkeypatch):
-    """Smoke: parse path only; full bridge needs TCP."""
-    assert parse_tally_ok_line("TALLY OK 1") is not None
+    """Publish failures are swallowed so vMix loop can continue."""
+
+    class DummyRedis:
+        called = False
+
+        async def publish(self, _ch, _data):
+            self.called = True
+            raise RuntimeError("redis down")
+
+    bridge = VmixBridge(host="127.0.0.1", port=8099, redis_url="redis://unused")
+    dummy = DummyRedis()
+    bridge._redis = dummy  # noqa: SLF001
+    parsed = parse_tally_ok_line("TALLY OK 1")
+    assert parsed is not None
+    bridge._tally = parsed  # noqa: SLF001
+    await bridge._publish_tally()  # noqa: SLF001
+    assert dummy.called is True
