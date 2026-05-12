@@ -79,10 +79,26 @@ class RundownEngine:
                     if s.status == "live":
                         s.status = "done"
                         session.add(s)
-            stmt = select(Story).where(Story.rundown_id == new_id)
-            for s in session.exec(stmt).all():
+                prev_rundown = session.get(Rundown, prev_id)
+                if prev_rundown:
+                    prev_rundown.status = "done"
+                    session.add(prev_rundown)
+            stmt = (
+                select(Story)
+                .where(Story.rundown_id == new_id)
+                .order_by(col(Story.position))
+            )
+            stories = list(session.exec(stmt).all())
+            for s in stories:
                 s.status = "pending"
                 session.add(s)
+            new_rundown = session.get(Rundown, new_id)
+            if new_rundown:
+                new_rundown.status = "live"
+                session.add(new_rundown)
+            if stories:
+                stories[0].status = "live"
+                session.add(stories[0])
             session.commit()
 
     async def start(self) -> None:

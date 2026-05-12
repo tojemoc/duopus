@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, col, create_engine, select
 
 import database
 import services.rundown_engine as rundown_engine_mod
@@ -75,6 +75,25 @@ def _seed(session: Session, rid: UUID) -> tuple[UUID, UUID, UUID]:
     )
     session.commit()
     return a, b, c
+
+
+def test_sync_set_active_marks_rundown_live_and_first_story_on_air(sqlite_engine):
+    rid = uuid4()
+    with Session(sqlite_engine) as s:
+        a, _b, _c = _seed(s, rid)
+    eng = RundownEngine(redis_url="redis://localhost:9")
+    eng._sync_set_active_rundown(None, rid)  # noqa: SLF001
+    with Session(sqlite_engine) as s:
+        r = s.get(Rundown, rid)
+        assert r is not None
+        assert r.status == "live"
+        assert s.get(Story, a).status == "live"  # type: ignore
+        others = [
+            st
+            for st in s.exec(select(Story).where(Story.rundown_id == rid).order_by(col(Story.position))).all()
+            if st.id != a
+        ]
+        assert all(st.status == "pending" for st in others)
 
 
 @pytest.mark.asyncio
