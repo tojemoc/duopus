@@ -214,6 +214,7 @@ export default function App() {
   const activate = async () => {
     if (!activeId) return;
     await api(`/api/rundowns/${activeId}/activate`, { method: "POST" });
+    loadRundowns();
   };
 
   const saveStoryPanel = async () => {
