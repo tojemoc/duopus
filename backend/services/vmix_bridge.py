@@ -267,6 +267,7 @@ class VmixBridge:
         payload = build_function_command(function_name, input=input, **kwargs)
         async with self._lock:
             writer = self._writer
+            reader = self._reader
             if not writer:
                 return "disconnected"
             try:
@@ -274,6 +275,6 @@ class VmixBridge:
                 await writer.drain()
             except Exception as e:
                 log.warning("send_command failed: %s", e)
-                await self._close_connection(old_writer=writer, old_reader=self._reader)
+                await self._close_connection(old_writer=writer, old_reader=reader)
                 return "error"
         return "sent"
