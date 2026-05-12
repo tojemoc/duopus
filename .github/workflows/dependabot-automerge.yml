@@ -1,0 +1,273 @@
+name: Dependabot Auto Merge
+
+on:
+  workflow_dispatch:
+
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+  issue_comment:
+    types:
+      - created
+
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+  schedule:
+    - cron: '0 10 */1 * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: dependabot-automerge
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - name: Process Dependabot PRs
+        uses: actions/github-script@v8
+
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            function sleep(ms) {
+              return new Promise(resolve => setTimeout(resolve, ms));
+            }
+
+            async function getOpenDependabotPrs() {
+              const prs = await github.paginate(
+                github.rest.pulls.list,
+                {
+                  owner,
+                  repo,
+                  state: 'open',
+                  per_page: 100,
+                }
+              );
+
+              return prs.filter(
+                pr => pr.user.login === 'dependabot[bot]'
+              );
+            }
+
+            async function maybeComment(issue_number, body) {
+              const comments = await github.paginate(
+                github.rest.issues.listComments,
+                {
+                  owner,
+                  repo,
+                  issue_number,
+                  per_page: 100,
+                }
+              );
+
+              const alreadyPosted = comments.some(
+                c =>
+                  c.user.login === 'github-actions[bot]' &&
+                  c.body.trim() === body.trim()
+              );
+
+              if (alreadyPosted) {
+                core.info(
+                  `Skipping duplicate comment on #${issue_number}: ${body}`
+                );
+                return false;
+              }
+
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+
+              core.info(`Posted comment on #${issue_number}: ${body}`);
+              return true;
+            }
+
+            async function waitForStableMergeability(prNumber) {
+              for (let i = 0; i < 12; i++) {
+                const pr = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: prNumber,
+                });
+
+                const state = pr.data.mergeable_state;
+
+                core.info(
+                  `#${prNumber} mergeable_state=${state}`
+                );
+
+                if (
+                  state &&
+                  state !== 'unknown' &&
+                  state !== 'unstable'
+                ) {
+                  return pr.data;
+                }
+
+                await sleep(5000);
+              }
+
+              return null;
+            }
+
+            async function processPr(prNumber) {
+              const pr = await waitForStableMergeability(prNumber);
+
+              if (!pr) {
+                core.warning(
+                  `Could not determine mergeability for #${prNumber}`
+                );
+                return;
+              }
+
+              if (pr.user.login !== 'dependabot[bot]') {
+                return;
+              }
+
+              if (pr.state !== 'open') {
+                return;
+              }
+
+              if (pr.draft) {
+                return;
+              }
+
+              core.info(`Processing #${pr.number}: ${pr.title}`);
+
+              // Already merged/queued
+              if (pr.auto_merge) {
+                core.info(`#${pr.number} already has auto-merge`);
+                return;
+              }
+
+              const state = pr.mergeable_state;
+
+              // Merge immediately if clean
+              if (state === 'clean' || state === 'has_hooks') {
+                try {
+                  await github.rest.pulls.merge({
+                    owner,
+                    repo,
+                    pull_number: pr.number,
+                    merge_method: 'squash',
+                  });
+
+                  core.info(`Merged #${pr.number}`);
+                } catch (error) {
+                  core.warning(
+                    `Merge failed for #${pr.number}: ${error.message}`
+                  );
+                }
+
+                return;
+              }
+
+              // Needs rebase
+              if (state === 'behind') {
+                await maybeComment(
+                  pr.number,
+                  '@dependabot rebase'
+                );
+                return;
+              }
+
+              // Hard conflicts / broken branch
+              if (
+                state === 'dirty' ||
+                state === 'blocked'
+              ) {
+                const comments = await github.paginate(
+                  github.rest.issues.listComments,
+                  {
+                    owner,
+                    repo,
+                    issue_number: pr.number,
+                    per_page: 100,
+                  }
+                );
+
+                const alreadyRebased = comments.some(c =>
+                  c.body.includes('@dependabot rebase')
+                );
+
+                if (!alreadyRebased) {
+                  await maybeComment(
+                    pr.number,
+                    '@dependabot rebase'
+                  );
+                } else {
+                  await maybeComment(
+                    pr.number,
+                    '@dependabot recreate'
+                  );
+                }
+
+                return;
+              }
+
+              core.info(
+                `#${pr.number} not mergeable yet (${state})`
+              );
+            }
+
+            //
+            // EVENT ROUTING
+            //
+
+            // pull_request event
+            if (context.payload.pull_request) {
+              await processPr(
+                context.payload.pull_request.number
+              );
+              return;
+            }
+
+            // workflow_run event
+            if (context.payload.workflow_run) {
+              const prs =
+                context.payload.workflow_run.pull_requests || [];
+
+              for (const pr of prs) {
+                await processPr(pr.number);
+              }
+
+              return;
+            }
+
+            // issue_comment event
+            if (context.payload.issue) {
+              const issue = context.payload.issue;
+
+              if (issue.pull_request) {
+                await processPr(issue.number);
+              }
+
+              return;
+            }
+
+            // scheduled sweep
+            const prs = await getOpenDependabotPrs();
+
+            for (const pr of prs) {
+              await processPr(pr.number);
+            }
