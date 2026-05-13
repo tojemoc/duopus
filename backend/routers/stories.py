@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, func, or_, update as sa_update
@@ -12,16 +12,9 @@ from beat_utils import beats_to_json, planned_duration_from_beats
 from database import get_session
 from models import Rundown, Script, Story, User, utcnow
 from schemas import LockResult, ReadyUpdate, StoryReorder, StoryStatusUpdate, StoryUpdate
+from story_lock import LOCK_TTL_SECONDS, lock_expired
 
 router = APIRouter(prefix="/api", tags=["stories"])
-
-LOCK_TTL_SECONDS = 5 * 60
-
-
-def _lock_expired(locked_at: datetime | None) -> bool:
-    if not locked_at:
-        return True
-    return utcnow() - locked_at > timedelta(seconds=LOCK_TTL_SECONDS)
 
 
 @router.patch("/stories/{story_id}")
@@ -35,7 +28,7 @@ async def patch_story(
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
 
-    if s.locked_by and s.locked_by != user.id and not _lock_expired(s.locked_at):
+    if s.locked_by and s.locked_by != user.id and not lock_expired(s.locked_at):
         raise HTTPException(status_code=400, detail="Being edited by another user")
 
     data = body.model_dump(exclude_unset=True)
@@ -112,6 +105,17 @@ async def reorder_stories(
         await session.execute(select(Story).where(Story.rundown_id == body.rundown_id, Story.id.in_(ids)))
     ).scalars().all()
     by_id = {s.id: s for s in rows}
+    max_pos = (
+        await session.execute(select(func.max(Story.position)).where(Story.rundown_id == body.rundown_id))
+    ).scalar_one_or_none()
+    base = (max_pos or 0) + 100_000
+    for i, it in enumerate(body.items):
+        s = by_id.get(it.id)
+        if not s:
+            continue
+        s.position = base + i
+        session.add(s)
+    await session.flush()
     for it in body.items:
         s = by_id.get(it.id)
         if not s:
@@ -156,7 +160,7 @@ async def lock_story(
 
     fresh = await session.get(Story, story_id)
     assert fresh is not None
-    if fresh.locked_by and fresh.locked_by != user.id and not _lock_expired(fresh.locked_at):
+    if fresh.locked_by and fresh.locked_by != user.id and not lock_expired(fresh.locked_at):
         other = await session.get(User, fresh.locked_by)
         return LockResult(
             ok=False,
@@ -177,7 +181,7 @@ async def unlock_story(
     s = await session.get(Story, story_id)
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
-    if s.locked_by and s.locked_by != user.id and not _lock_expired(s.locked_at):
+    if s.locked_by and s.locked_by != user.id and not lock_expired(s.locked_at):
         other = await session.get(User, s.locked_by)
         return LockResult(
             ok=False,

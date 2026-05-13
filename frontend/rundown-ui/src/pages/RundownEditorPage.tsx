@@ -145,21 +145,33 @@ export function RundownEditorPage() {
     setBusy(true);
     setErr(null);
     try {
-      await api(`/api/stories/${openStoryId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          beats: editBeats,
-          planned_duration_override: editOverride === "" ? null : Number(editOverride),
-          title_in: editTitleIn,
-          title_duration: editTitleDur,
-        }),
-      });
-      await api(`/api/scripts/${openStoryId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: editBody }),
-      });
+      try {
+        await api(`/api/stories/${openStoryId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            beats: editBeats,
+            planned_duration_override: editOverride === "" ? null : Number(editOverride),
+            title_in: editTitleIn,
+            title_duration: editTitleDur,
+          }),
+        });
+      } catch (e: any) {
+        setErr(e?.message || "Failed to save story details.");
+        return;
+      }
+      try {
+        await api(`/api/scripts/${openStoryId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: editBody }),
+        });
+      } catch (e: any) {
+        setErr(
+          "Beats and title settings were saved, but the script could not be saved. Try Save again to keep your script.",
+        );
+        return;
+      }
       try {
         await api(`/api/stories/${openStoryId}/lock`, { method: "DELETE" });
       } catch (e) {
@@ -167,8 +179,6 @@ export function RundownEditorPage() {
       }
       setOpenStoryId(null);
       await load();
-    } catch (e: any) {
-      setErr(e?.message || "Failed to save.");
     } finally {
       setBusy(false);
     }

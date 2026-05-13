@@ -9,6 +9,12 @@ type UserRow = {
   is_active: boolean;
 };
 
+type Role = UserRow["role"];
+
+function isRole(value: string): value is Role {
+  return value === "editor" || value === "admin";
+}
+
 function usernameFromEmail(email: string) {
   const i = email.indexOf("@");
   return i >= 0 ? email.slice(0, i) : email;
@@ -83,8 +89,11 @@ export function AdminUsersPage() {
         <div className="font-medium">Create user</div>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
-            <label className="block text-xs font-medium text-slate-700">Username</label>
+            <label htmlFor="newUsername" className="block text-xs font-medium text-slate-700">
+              Username
+            </label>
             <input
+              id="newUsername"
               className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
               value={newUsername}
               onChange={(e) => setNewUsername(e.target.value)}
@@ -92,8 +101,11 @@ export function AdminUsersPage() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700">Display name</label>
+            <label htmlFor="newDisplay" className="block text-xs font-medium text-slate-700">
+              Display name
+            </label>
             <input
+              id="newDisplay"
               className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
               value={newDisplay}
               onChange={(e) => setNewDisplay(e.target.value)}
@@ -101,19 +113,28 @@ export function AdminUsersPage() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700">Role</label>
+            <label htmlFor="newRole" className="block text-xs font-medium text-slate-700">
+              Role
+            </label>
             <select
+              id="newRole"
               className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
               value={newRole}
-              onChange={(e) => setNewRole(e.target.value as any)}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (isRole(v)) setNewRole(v);
+              }}
             >
               <option value="editor">editor</option>
               <option value="admin">admin</option>
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700">Password</label>
+            <label htmlFor="newPassword" className="block text-xs font-medium text-slate-700">
+              Password
+            </label>
             <input
+              id="newPassword"
               className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
@@ -206,7 +227,11 @@ function UserRowItem({ user, onChange }: { user: UserRow; onChange: () => Promis
       <td className="px-3 py-2 text-slate-600">{user.id}</td>
       <td className="px-3 py-2 font-mono text-slate-800">{usernameFromEmail(user.email)}</td>
       <td className="px-3 py-2">
+        <label htmlFor={`user-${user.id}-display`} className="sr-only">
+          Display name
+        </label>
         <input
+          id={`user-${user.id}-display`}
           className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
           value={display}
           onChange={(e) => setDisplay(e.target.value)}
@@ -214,10 +239,17 @@ function UserRowItem({ user, onChange }: { user: UserRow; onChange: () => Promis
         {err && <div className="mt-1 text-xs text-rose-700">{err}</div>}
       </td>
       <td className="px-3 py-2">
+        <label htmlFor={`user-${user.id}-role`} className="sr-only">
+          Role
+        </label>
         <select
+          id={`user-${user.id}-role`}
           className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
           value={role}
-          onChange={(e) => setRole(e.target.value as any)}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (isRole(v)) setRole(v);
+          }}
         >
           <option value="editor">editor</option>
           <option value="admin">admin</option>

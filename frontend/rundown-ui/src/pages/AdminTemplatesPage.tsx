@@ -11,6 +11,7 @@ type Template = {
 };
 
 type Slot = {
+  clientId: string;
   position: number;
   label: string;
   segment: string;
@@ -65,6 +66,7 @@ export function AdminTemplatesPage() {
     setSlots((s) => [
       ...s,
       {
+        clientId: crypto.randomUUID(),
         position: pos,
         label: `Story ${pos}`,
         segment: "Story",
@@ -89,7 +91,7 @@ export function AdminTemplatesPage() {
           recurrence,
           recurrence_day: recurrence === "weekly" ? (recDay === "" ? null : Number(recDay)) : null,
           auto_generate_days_ahead: ahead,
-          slots,
+          slots: slots.map(({ clientId: _rowKey, ...slot }) => slot),
         }),
       });
       setName("");
@@ -184,15 +186,17 @@ export function AdminTemplatesPage() {
               </tr>
             </thead>
             <tbody>
-              {slots.map((s, idx) => (
-                <tr key={idx} className="border-t border-slate-100">
+              {slots.map((s) => (
+                <tr key={s.clientId} className="border-t border-slate-100">
                   <td className="px-2 py-2">
                     <input
                       className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                       type="number"
                       value={s.position}
                       onChange={(e) =>
-                        setSlots((prev) => prev.map((x, i) => (i === idx ? { ...x, position: Number(e.target.value) } : x)))
+                        setSlots((prev) =>
+                          prev.map((x) => (x.clientId === s.clientId ? { ...x, position: Number(e.target.value) } : x)),
+                        )
                       }
                     />
                   </td>
@@ -200,14 +204,18 @@ export function AdminTemplatesPage() {
                     <input
                       className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                       value={s.label}
-                      onChange={(e) => setSlots((prev) => prev.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x)))}
+                      onChange={(e) =>
+                        setSlots((prev) => prev.map((x) => (x.clientId === s.clientId ? { ...x, label: e.target.value } : x)))
+                      }
                     />
                   </td>
                   <td className="px-2 py-2">
                     <input
                       className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                       value={s.segment}
-                      onChange={(e) => setSlots((prev) => prev.map((x, i) => (i === idx ? { ...x, segment: e.target.value } : x)))}
+                      onChange={(e) =>
+                        setSlots((prev) => prev.map((x) => (x.clientId === s.clientId ? { ...x, segment: e.target.value } : x)))
+                      }
                     />
                   </td>
                   <td className="px-2 py-2">
@@ -216,7 +224,7 @@ export function AdminTemplatesPage() {
                       value={s.beats.map((b) => b.category).join(" ")}
                       onChange={(e) =>
                         setSlots((prev) =>
-                          prev.map((x, i) => (i === idx ? { ...x, beats: makeBeatSeq(e.target.value) } : x)),
+                          prev.map((x) => (x.clientId === s.clientId ? { ...x, beats: makeBeatSeq(e.target.value) } : x)),
                         )
                       }
                     />
@@ -225,7 +233,7 @@ export function AdminTemplatesPage() {
                     <button
                       className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs hover:bg-slate-50"
                       type="button"
-                      onClick={() => setSlots((prev) => prev.filter((_, i) => i !== idx))}
+                      onClick={() => setSlots((prev) => prev.filter((x) => x.clientId !== s.clientId))}
                     >
                       Remove
                     </button>
