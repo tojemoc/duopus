@@ -1,144 +1,176 @@
-from uuid import UUID
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, func, select
+from sqlalchemy import delete, func, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
+from auth import current_active_user
+from beat_utils import beats_to_json, planned_duration_from_beats
 from database import get_session
-from deps import RundownEngineDep
-from models import Rundown, Script, Story, utcnow
-from schemas import ScriptUpdate, StoryCreate, StoryUpdate
+from models import Rundown, Script, Story, User, utcnow
+from schemas import LockResult, StoryReorder, StoryUpdate
 
-router = APIRouter(tags=["stories"])
+router = APIRouter(prefix="/api", tags=["stories"])
 
-
-@router.get("/api/rundowns/{rundown_id}/stories")
-def list_stories(rundown_id: UUID, session: Session = Depends(get_session)):
-    if not session.get(Rundown, rundown_id):
-        raise HTTPException(status_code=404, detail="Rundown not found")
-    stmt = (
-        select(Story)
-        .where(Story.rundown_id == rundown_id)
-        .order_by(col(Story.position))
-    )
-    return list(session.exec(stmt).all())
+LOCK_TTL_SECONDS = 5 * 60
 
 
-@router.post("/api/rundowns/{rundown_id}/stories", response_model=Story)
-def create_story(
-    rundown_id: UUID,
-    body: StoryCreate,
-    session: Session = Depends(get_session),
-):
-    lock_stmt = select(Rundown).where(Rundown.id == rundown_id).with_for_update()
-    rd = session.exec(lock_stmt).first()
-    if not rd:
-        raise HTTPException(status_code=404, detail="Rundown not found")
-    pos = body.position
-    if pos is None:
-        stmt = select(func.max(Story.position)).where(Story.rundown_id == rundown_id)
-        max_pos = session.exec(stmt).one()
-        pos = (max_pos or 0) + 1
-    story = Story(
-        rundown_id=rundown_id,
-        position=pos,
-        title=body.title,
-        type=body.type,
-        planned_duration=body.planned_duration,
-        vmix_input=body.vmix_input,
-    )
-    session.add(story)
-    session.flush()
-    session.add(Script(story_id=story.id, body=""))
-    try:
-        session.commit()
-    except IntegrityError:
-        session.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail=f"Position {pos} already taken in this rundown",
-        ) from None
-    session.refresh(story)
-    return story
+def _lock_expired(locked_at: datetime | None) -> bool:
+    if not locked_at:
+        return True
+    return utcnow() - locked_at > timedelta(seconds=LOCK_TTL_SECONDS)
 
 
-@router.get("/api/stories/{story_id}", response_model=Story)
-def get_story(story_id: UUID, session: Session = Depends(get_session)):
-    s = session.get(Story, story_id)
-    if not s:
-        raise HTTPException(status_code=404, detail="Story not found")
-    return s
-
-
-@router.patch("/api/stories/{story_id}", response_model=Story)
-def update_story(
-    story_id: UUID,
+@router.patch("/stories/{story_id}")
+async def patch_story(
+    story_id: int,
     body: StoryUpdate,
-    session: Session = Depends(get_session),
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
 ):
-    s = session.get(Story, story_id)
+    s = await session.get(Story, story_id)
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
+
+    if s.locked_by and s.locked_by != user.id and not _lock_expired(s.locked_at):
+        raise HTTPException(status_code=400, detail="Being edited by another user")
+
     data = body.model_dump(exclude_unset=True)
+    beats = data.pop("beats", None)
+    if beats is not None:
+        s.beats = beats_to_json(beats)
+        s.planned_duration = planned_duration_from_beats(s.beats, s.planned_duration_override)
+
     for k, v in data.items():
         setattr(s, k, v)
+
+    # Recompute planned_duration if override changed and beats have no durations.
+    if "planned_duration_override" in data and beats is None:
+        s.planned_duration = planned_duration_from_beats(s.beats, s.planned_duration_override)
+
+    # Release lock on save
+    if s.locked_by == user.id:
+        s.locked_by = None
+        s.locked_at = None
+
     session.add(s)
-    attempted_pos = s.position
-    try:
-        session.commit()
-    except IntegrityError:
-        session.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail=f"Position {attempted_pos} already taken in this rundown",
-        ) from None
-    session.refresh(s)
+    await session.commit()
+    await session.refresh(s)
     return s
 
 
-@router.delete("/api/stories/{story_id}")
-def delete_story(story_id: UUID, session: Session = Depends(get_session)):
-    s = session.get(Story, story_id)
+@router.patch("/stories/{story_id}/ready")
+async def set_ready(
+    story_id: int,
+    body: dict,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
+    s = await session.get(Story, story_id)
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
-    sc = session.exec(select(Script).where(Script.story_id == s.id)).first()
-    if sc:
-        session.delete(sc)
-    session.delete(s)
-    session.commit()
+    ready = bool(body.get("ready"))
+    s.ready = ready
+    session.add(s)
+    await session.commit()
+    return {"ok": True, "ready": s.ready}
+
+
+@router.patch("/stories/{story_id}/status")
+async def set_status(
+    story_id: int,
+    body: dict,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
+    s = await session.get(Story, story_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Story not found")
+    status = body.get("status")
+    if status not in ("pending", "live", "done"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    s.status = status
+    session.add(s)
+    await session.commit()
+    return {"ok": True, "status": s.status}
+
+
+@router.patch("/stories/reorder")
+async def reorder_stories(
+    body: StoryReorder,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
+    rd = await session.get(Rundown, body.rundown_id)
+    if not rd:
+        raise HTTPException(status_code=404, detail="Rundown not found")
+    ids = [it.id for it in body.items]
+    rows = (
+        await session.execute(select(Story).where(Story.rundown_id == body.rundown_id, Story.id.in_(ids)))
+    ).scalars().all()
+    by_id = {s.id: s for s in rows}
+    for it in body.items:
+        s = by_id.get(it.id)
+        if not s:
+            continue
+        s.position = it.position
+        session.add(s)
+    await session.commit()
     return {"ok": True}
 
 
-@router.get("/api/stories/{story_id}/script")
-def get_script(story_id: UUID, session: Session = Depends(get_session)):
-    s = session.get(Story, story_id)
-    if not s:
-        raise HTTPException(status_code=404, detail="Story not found")
-    sc = session.exec(select(Script).where(Script.story_id == story_id)).first()
-    if not sc:
-        raise HTTPException(status_code=404, detail="Script not found")
-    return {"story_id": str(story_id), "body": sc.body, "updated_at": sc.updated_at.isoformat()}
-
-
-@router.put("/api/stories/{story_id}/script")
-async def put_script(
-    story_id: UUID,
-    body: ScriptUpdate,
-    engine: RundownEngineDep,
-    session: Session = Depends(get_session),
+@router.post("/stories/{story_id}/lock", response_model=LockResult)
+async def lock_story(
+    story_id: int,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
 ):
-    s = session.get(Story, story_id)
+    s = await session.get(Story, story_id)
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
-    sc = session.exec(select(Script).where(Script.story_id == story_id)).first()
-    if not sc:
-        sc = Script(story_id=story_id, body=body.body, updated_at=utcnow())
-        session.add(sc)
-    else:
-        sc.body = body.body
-        sc.updated_at = utcnow()
-        session.add(sc)
-    session.commit()
-    session.refresh(sc)
-    await engine.broadcast_snapshot()
-    return {"story_id": str(story_id), "body": sc.body, "updated_at": sc.updated_at.isoformat()}
+
+    if s.locked_by and s.locked_by != user.id and not _lock_expired(s.locked_at):
+        other = await session.get(User, s.locked_by)
+        return LockResult(
+            ok=False,
+            locked_by=s.locked_by,
+            locked_by_name=other.display_name if other else None,
+            locked_at=s.locked_at,
+        )
+
+    s.locked_by = user.id
+    s.locked_at = utcnow()
+    session.add(s)
+    await session.commit()
+    await session.refresh(s)
+    return LockResult(ok=True, locked_by=s.locked_by, locked_by_name=user.display_name, locked_at=s.locked_at)
+
+
+@router.delete("/stories/{story_id}/lock", response_model=LockResult)
+async def unlock_story(
+    story_id: int,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
+    s = await session.get(Story, story_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Story not found")
+    if s.locked_by and s.locked_by != user.id and not _lock_expired(s.locked_at):
+        other = await session.get(User, s.locked_by)
+        return LockResult(
+            ok=False,
+            locked_by=s.locked_by,
+            locked_by_name=other.display_name if other else None,
+            locked_at=s.locked_at,
+        )
+
+    s.locked_by = None
+    s.locked_at = None
+    session.add(s)
+    await session.commit()
+    await session.refresh(s)
+    return LockResult(ok=True, locked_by=None, locked_by_name=None, locked_at=None)
