@@ -13,6 +13,8 @@ from story_lock import lock_expired
 
 router = APIRouter(prefix="/api/scripts", tags=["scripts"])
 
+_PUT_SCRIPT_RETRIES = 3
+
 
 @router.get("/{story_id}", response_model=ScriptRead)
 async def get_script(
@@ -36,45 +38,42 @@ async def put_script(
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_session),
 ):
-    s = await session.get(Story, story_id)
-    if not s:
-        raise HTTPException(status_code=404, detail="Story not found")
+    sc: Script | None = None
+    for _ in range(_PUT_SCRIPT_RETRIES):
+        stmt = select(Story).where(Story.id == story_id).with_for_update()
+        res = await session.execute(stmt)
+        s = res.scalar_one_or_none()
+        if not s:
+            raise HTTPException(status_code=404, detail="Story not found")
 
-    if s.locked_by and s.locked_by != user.id and not lock_expired(s.locked_at):
-        raise HTTPException(status_code=400, detail="Being edited by another user")
+        if s.locked_by and s.locked_by != user.id and not lock_expired(s.locked_at):
+            raise HTTPException(status_code=400, detail="Being edited by another user")
 
-    sc = (await session.execute(select(Script).where(Script.story_id == story_id))).scalars().first()
-    if not sc:
-        sc = Script(story_id=story_id, body=body.body, updated_at=utcnow(), updated_by=user.id)
-        session.add(sc)
+        sc = (await session.execute(select(Script).where(Script.story_id == story_id))).scalars().first()
         try:
-            await session.flush()
+            if not sc:
+                sc = Script(story_id=story_id, body=body.body, updated_at=utcnow(), updated_by=user.id)
+                session.add(sc)
+                await session.flush()
+            else:
+                sc.body = body.body
+                sc.updated_at = utcnow()
+                sc.updated_by = user.id
+                session.add(sc)
+
+            if s.locked_by == user.id:
+                s.locked_by = None
+                s.locked_at = None
+                session.add(s)
+
+            await session.commit()
+            await session.refresh(sc)
+            return ScriptRead(story_id=story_id, body=sc.body, updated_at=sc.updated_at, updated_by=sc.updated_by)
         except IntegrityError:
             await session.rollback()
-            s = await session.get(Story, story_id)
-            if not s:
-                raise HTTPException(status_code=404, detail="Story not found") from None
-            if s.locked_by and s.locked_by != user.id and not lock_expired(s.locked_at):
-                raise HTTPException(status_code=400, detail="Being edited by another user") from None
-            sc = (await session.execute(select(Script).where(Script.story_id == story_id))).scalars().first()
-            if not sc:
-                raise HTTPException(status_code=500, detail="Could not save script after a concurrent update") from None
-            sc.body = body.body
-            sc.updated_at = utcnow()
-            sc.updated_by = user.id
-            session.add(sc)
-    else:
-        sc.body = body.body
-        sc.updated_at = utcnow()
-        sc.updated_by = user.id
-        session.add(sc)
+            continue
 
-    s_final = await session.get(Story, story_id)
-    if s_final and s_final.locked_by == user.id:
-        s_final.locked_by = None
-        s_final.locked_at = None
-        session.add(s_final)
-
-    await session.commit()
-    await session.refresh(sc)
-    return ScriptRead(story_id=story_id, body=sc.body, updated_at=sc.updated_at, updated_by=sc.updated_by)
+    raise HTTPException(
+        status_code=500,
+        detail="Could not save script after a concurrent update",
+    )

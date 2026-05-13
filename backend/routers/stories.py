@@ -101,10 +101,17 @@ async def reorder_stories(
     if not rd:
         raise HTTPException(status_code=404, detail="Rundown not found")
     ids = [it.id for it in body.items]
+    if len(ids) != len(set(ids)):
+        raise HTTPException(status_code=400, detail="Duplicate story ids in reorder request")
+    positions = [it.position for it in body.items]
+    if len(positions) != len(set(positions)):
+        raise HTTPException(status_code=400, detail="Duplicate target positions in reorder request")
     rows = (
         await session.execute(select(Story).where(Story.rundown_id == body.rundown_id, Story.id.in_(ids)))
     ).scalars().all()
     by_id = {s.id: s for s in rows}
+    if len(by_id) != len(ids):
+        raise HTTPException(status_code=400, detail="One or more stories were not found in this rundown")
     max_pos = (
         await session.execute(select(func.max(Story.position)).where(Story.rundown_id == body.rundown_id))
     ).scalar_one_or_none()
@@ -181,18 +188,38 @@ async def unlock_story(
     s = await session.get(Story, story_id)
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
-    if s.locked_by and s.locked_by != user.id and not lock_expired(s.locked_at):
-        other = await session.get(User, s.locked_by)
+
+    expiry_cutoff = utcnow() - timedelta(seconds=LOCK_TTL_SECONDS)
+    stmt = (
+        sa_update(Story)
+        .where(Story.id == story_id)
+        .where(
+            or_(
+                Story.locked_by.is_(None),
+                Story.locked_by == user.id,
+                Story.locked_at.is_(None),
+                Story.locked_at < expiry_cutoff,
+            )
+        )
+        .values(locked_by=None, locked_at=None)
+    )
+    result = await session.execute(stmt)
+    await session.commit()
+
+    if result.rowcount == 1:
+        return LockResult(ok=True, locked_by=None, locked_by_name=None, locked_at=None)
+
+    fresh = await session.get(Story, story_id)
+    assert fresh is not None
+    if fresh.locked_by is None:
+        return LockResult(ok=True, locked_by=None, locked_by_name=None, locked_at=None)
+    if fresh.locked_by != user.id and not lock_expired(fresh.locked_at):
+        other = await session.get(User, fresh.locked_by)
         return LockResult(
             ok=False,
-            locked_by=s.locked_by,
+            locked_by=fresh.locked_by,
             locked_by_name=other.display_name if other else None,
-            locked_at=s.locked_at,
+            locked_at=fresh.locked_at,
         )
 
-    s.locked_by = None
-    s.locked_at = None
-    session.add(s)
-    await session.commit()
-    await session.refresh(s)
-    return LockResult(ok=True, locked_by=None, locked_by_name=None, locked_at=None)
+    return LockResult(ok=False, locked_by=fresh.locked_by, locked_by_name=None, locked_at=fresh.locked_at)
