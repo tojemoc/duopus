@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_, update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -9,7 +12,7 @@ from auth import current_active_user
 from database import get_session
 from models import Script, Story, User, utcnow
 from schemas import ScriptRead, ScriptUpdate
-from story_lock import lock_expired
+from story_lock import LOCK_TTL_SECONDS
 
 router = APIRouter(prefix="/api/scripts", tags=["scripts"])
 
@@ -38,15 +41,28 @@ async def put_script(
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_session),
 ):
+    if not await session.get(Story, story_id):
+        raise HTTPException(status_code=404, detail="Story not found")
+
     sc: Script | None = None
     for _ in range(_PUT_SCRIPT_RETRIES):
-        stmt = select(Story).where(Story.id == story_id).with_for_update()
-        res = await session.execute(stmt)
-        s = res.scalar_one_or_none()
-        if not s:
-            raise HTTPException(status_code=404, detail="Story not found")
-
-        if s.locked_by and s.locked_by != user.id and not lock_expired(s.locked_at):
+        expiry_cutoff = utcnow() - timedelta(seconds=LOCK_TTL_SECONDS)
+        claim = (
+            sa_update(Story)
+            .where(Story.id == story_id)
+            .where(
+                or_(
+                    Story.locked_by.is_(None),
+                    Story.locked_by == user.id,
+                    Story.locked_at.is_(None),
+                    Story.locked_at < expiry_cutoff,
+                )
+            )
+            .values(locked_by=user.id, locked_at=utcnow())
+        )
+        claim_result = await session.execute(claim)
+        if claim_result.rowcount != 1:
+            await session.rollback()
             raise HTTPException(status_code=400, detail="Being edited by another user")
 
         sc = (await session.execute(select(Script).where(Script.story_id == story_id))).scalars().first()
@@ -61,10 +77,11 @@ async def put_script(
                 sc.updated_by = user.id
                 session.add(sc)
 
-            if s.locked_by == user.id:
-                s.locked_by = None
-                s.locked_at = None
-                session.add(s)
+            await session.execute(
+                sa_update(Story)
+                .where(Story.id == story_id, Story.locked_by == user.id)
+                .values(locked_by=None, locked_at=None)
+            )
 
             await session.commit()
             await session.refresh(sc)

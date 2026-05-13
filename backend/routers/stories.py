@@ -17,6 +17,48 @@ from story_lock import LOCK_TTL_SECONDS, lock_expired
 router = APIRouter(prefix="/api", tags=["stories"])
 
 
+@router.patch("/stories/reorder")
+async def reorder_stories(
+    body: StoryReorder,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
+    rd = await session.get(Rundown, body.rundown_id)
+    if not rd:
+        raise HTTPException(status_code=404, detail="Rundown not found")
+    ids = [it.id for it in body.items]
+    if len(ids) != len(set(ids)):
+        raise HTTPException(status_code=400, detail="Duplicate story ids in reorder request")
+    positions = [it.position for it in body.items]
+    if len(positions) != len(set(positions)):
+        raise HTTPException(status_code=400, detail="Duplicate target positions in reorder request")
+    rows = (
+        await session.execute(select(Story).where(Story.rundown_id == body.rundown_id, Story.id.in_(ids)))
+    ).scalars().all()
+    by_id = {s.id: s for s in rows}
+    if len(by_id) != len(ids):
+        raise HTTPException(status_code=400, detail="One or more stories were not found in this rundown")
+    max_pos = (
+        await session.execute(select(func.max(Story.position)).where(Story.rundown_id == body.rundown_id))
+    ).scalar_one_or_none()
+    base = (max_pos or 0) + 100_000
+    for i, it in enumerate(body.items):
+        s = by_id.get(it.id)
+        if not s:
+            continue
+        s.position = base + i
+        session.add(s)
+    await session.flush()
+    for it in body.items:
+        s = by_id.get(it.id)
+        if not s:
+            continue
+        s.position = it.position
+        session.add(s)
+    await session.commit()
+    return {"ok": True}
+
+
 @router.patch("/stories/{story_id}")
 async def patch_story(
     story_id: int,
@@ -89,48 +131,6 @@ async def set_status(
     session.add(s)
     await session.commit()
     return {"ok": True, "status": s.status}
-
-
-@router.patch("/stories/reorder")
-async def reorder_stories(
-    body: StoryReorder,
-    user: User = Depends(current_active_user),
-    session: AsyncSession = Depends(get_session),
-):
-    rd = await session.get(Rundown, body.rundown_id)
-    if not rd:
-        raise HTTPException(status_code=404, detail="Rundown not found")
-    ids = [it.id for it in body.items]
-    if len(ids) != len(set(ids)):
-        raise HTTPException(status_code=400, detail="Duplicate story ids in reorder request")
-    positions = [it.position for it in body.items]
-    if len(positions) != len(set(positions)):
-        raise HTTPException(status_code=400, detail="Duplicate target positions in reorder request")
-    rows = (
-        await session.execute(select(Story).where(Story.rundown_id == body.rundown_id, Story.id.in_(ids)))
-    ).scalars().all()
-    by_id = {s.id: s for s in rows}
-    if len(by_id) != len(ids):
-        raise HTTPException(status_code=400, detail="One or more stories were not found in this rundown")
-    max_pos = (
-        await session.execute(select(func.max(Story.position)).where(Story.rundown_id == body.rundown_id))
-    ).scalar_one_or_none()
-    base = (max_pos or 0) + 100_000
-    for i, it in enumerate(body.items):
-        s = by_id.get(it.id)
-        if not s:
-            continue
-        s.position = base + i
-        session.add(s)
-    await session.flush()
-    for it in body.items:
-        s = by_id.get(it.id)
-        if not s:
-            continue
-        s.position = it.position
-        session.add(s)
-    await session.commit()
-    return {"ok": True}
 
 
 @router.post("/stories/{story_id}/lock", response_model=LockResult)
