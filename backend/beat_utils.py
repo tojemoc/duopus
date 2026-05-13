@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from pydantic import ValidationError
+
 from schemas import Beat
 
 
@@ -28,7 +30,7 @@ def beats_from_json(raw: str) -> list[Beat]:
         if isinstance(item, dict):
             try:
                 out.append(Beat.model_validate(item))
-            except Exception:
+            except ValidationError:
                 continue
     return out
 

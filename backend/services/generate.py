@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -34,7 +35,18 @@ async def generate_rundown_from_template(
         generated_at=utcnow(),
     )
     session.add(rundown)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        existing = (
+            await session.execute(
+                select(Rundown).where(Rundown.template_id == template_id, Rundown.show_date == show_date)
+            )
+        ).scalars().first()
+        if existing:
+            return existing
+        raise
 
     for i, slot in enumerate(slots, start=1):
         story = Story(
@@ -54,7 +66,19 @@ async def generate_rundown_from_template(
         await session.flush()
         session.add(Script(story_id=story.id, body="", updated_at=utcnow(), updated_by=None))  # type: ignore[arg-type]
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        existing = (
+            await session.execute(
+                select(Rundown).where(Rundown.template_id == template_id, Rundown.show_date == show_date)
+            )
+        ).scalars().first()
+        if existing:
+            return existing
+        raise
+
     await session.refresh(rundown)
     return rundown
 

@@ -49,6 +49,8 @@ class TemplateSlot(SQLModel, table=True):
 
 
 class Rundown(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("template_id", "show_date", name="uq_rundown_template_show_date"),)
+
     id: int | None = Field(default=None, primary_key=True)
     template_id: int | None = Field(default=None, foreign_key="template.id", index=True)
     title: str

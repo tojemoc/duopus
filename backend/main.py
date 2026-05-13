@@ -16,6 +16,11 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 
+def _validate_cors(origins: list[str], allow_credentials: bool) -> None:
+    if allow_credentials and any(o == "*" for o in origins):
+        raise ValueError("Invalid CORS configuration: allow_credentials=True cannot be combined with wildcard origins")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -29,16 +34,18 @@ async def lifespan(app: FastAPI):
     finally:
         stop.set()
         task.cancel()
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(asyncio.CancelledError):
             await task
 
 
 app = FastAPI(title="Duopus NRCS (Phase 1)", lifespan=lifespan)
 settings = get_settings()
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+resolved_origins = origins or ["http://localhost:5173"]
+_validate_cors(resolved_origins, allow_credentials=True)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins or ["http://localhost:5173"],
+    allow_origins=resolved_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

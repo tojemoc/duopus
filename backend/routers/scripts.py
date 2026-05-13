@@ -23,10 +23,7 @@ async def get_script(
         raise HTTPException(status_code=404, detail="Story not found")
     sc = (await session.execute(select(Script).where(Script.story_id == story_id))).scalars().first()
     if not sc:
-        sc = Script(story_id=story_id, body="", updated_at=utcnow(), updated_by=None)
-        session.add(sc)
-        await session.commit()
-        await session.refresh(sc)
+        raise HTTPException(status_code=404, detail="Script not found")
     return ScriptRead(story_id=story_id, body=sc.body, updated_at=sc.updated_at, updated_by=sc.updated_by)
 
 

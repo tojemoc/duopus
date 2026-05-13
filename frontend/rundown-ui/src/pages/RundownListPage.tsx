@@ -3,8 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { Rundown } from "../types";
 
-function isoToday() {
-  return new Date().toISOString().slice(0, 10);
+function localYmd(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 export function RundownListPage() {
@@ -17,7 +20,7 @@ export function RundownListPage() {
       .catch((e: any) => setErr(e?.message || "Failed to load rundowns."));
   }, []);
 
-  const today = isoToday();
+  const today = localYmd();
   const { todayItems, futureItems, pastItems } = useMemo(() => {
     const todayItems = rows.filter((r) => r.show_date === today);
     const futureItems = rows.filter((r) => r.show_date > today);

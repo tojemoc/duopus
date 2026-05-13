@@ -12,19 +12,31 @@ function fmtMmSs(sec: number) {
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
-function parseBeats(raw: string): Beat[] {
-  try {
-    const arr = JSON.parse(raw || "[]");
-    if (!Array.isArray(arr)) return [];
-    return arr.map((x: any) => ({
-      id: String(x?.id || crypto.randomUUID()),
-      category: (x?.category as BeatCategory) || "VO",
-      duration: Number(x?.duration || 0),
-      note: String(x?.note || ""),
-    }));
-  } catch {
+const ALLOWED_BEAT: ReadonlySet<BeatCategory> = new Set(["VO", "ILU", "SYN"]);
+
+function parseBeats(raw: unknown): Beat[] {
+  let arr: unknown[] = [];
+  if (typeof raw === "string") {
+    try {
+      const p = JSON.parse(raw || "[]");
+      arr = Array.isArray(p) ? p : [];
+    } catch {
+      return [];
+    }
+  } else if (Array.isArray(raw)) {
+    arr = raw;
+  } else {
     return [];
   }
+  return arr.map((x: any) => {
+    const id = typeof x?.id === "string" && x.id ? x.id : crypto.randomUUID();
+    const rawCat = String(x?.category ?? "");
+    const category: BeatCategory = ALLOWED_BEAT.has(rawCat as BeatCategory) ? (rawCat as BeatCategory) : "VO";
+    let duration = Number(x?.duration);
+    if (!Number.isFinite(duration) || duration < 0) duration = 0;
+    const note = x?.note == null ? "" : String(x.note);
+    return { id, category, duration, note };
+  });
 }
 
 function defaultBeat(cat: BeatCategory): Beat {
@@ -57,7 +69,10 @@ export function RundownEditorPage() {
     setErr(null);
     const data = await api<{ rundown: Rundown; stories: any[] }>(`/api/rundowns/${rundownId}/full`);
     setRundown(data.rundown);
-    const st = data.stories.map((s) => s as Story);
+    const st: Story[] = data.stories.map((s: any) => ({
+      ...s,
+      beats: parseBeats(s.beats),
+    }));
     setStories(st);
     const sc: Record<number, Script | null> = {};
     for (const s of data.stories) {
@@ -90,9 +105,17 @@ export function RundownEditorPage() {
         return;
       }
       const s = stories.find((x) => x.id === storyId);
-      if (!s) return;
+      if (!s) {
+        try {
+          await api(`/api/stories/${storyId}/lock`, { method: "DELETE" });
+        } catch (e) {
+          console.error("Failed to release lock after story disappeared", e);
+        }
+        setErr("That story is no longer available.");
+        return;
+      }
       setOpenStoryId(storyId);
-      setEditBeats(parseBeats(s.beats));
+      setEditBeats(s.beats);
       setEditBeatId(null);
       setEditOverride(s.planned_duration_override ?? "");
       setEditTitleIn(s.title_in || 0);
@@ -107,7 +130,11 @@ export function RundownEditorPage() {
 
   const closeEditor = async () => {
     if (!openStoryId) return;
-    await api(`/api/stories/${openStoryId}/lock`, { method: "DELETE" });
+    try {
+      await api(`/api/stories/${openStoryId}/lock`, { method: "DELETE" });
+    } catch (e) {
+      console.error("Unlock failed", e);
+    }
     setOpenStoryId(null);
     setEditBeatId(null);
     await load();
@@ -133,6 +160,11 @@ export function RundownEditorPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: editBody }),
       });
+      try {
+        await api(`/api/stories/${openStoryId}/lock`, { method: "DELETE" });
+      } catch (e) {
+        console.error("Unlock after save failed", e);
+      }
       setOpenStoryId(null);
       await load();
     } catch (e: any) {
@@ -210,7 +242,7 @@ export function RundownEditorPage() {
                     )}
                   </td>
                   <td className="px-3 py-2">
-                    <BeatStrip beats={parseBeats(s.beats)} onChange={() => {}} onEditBeat={() => {}} />
+                    <BeatStrip beats={s.beats} onChange={() => {}} onEditBeat={() => {}} />
                   </td>
                   <td className="px-3 py-2 font-mono text-slate-700">{fmtMmSs(s.planned_duration)}</td>
                   <td className="px-3 py-2">

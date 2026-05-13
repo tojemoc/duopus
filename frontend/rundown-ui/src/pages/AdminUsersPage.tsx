@@ -162,6 +162,12 @@ function UserRowItem({ user, onChange }: { user: UserRow; onChange: () => Promis
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  useEffect(() => {
+    setDisplay(user.display_name);
+    setRole(user.role);
+    setErr(null);
+  }, [user.id, user.display_name, user.role]);
+
   const dirty = useMemo(() => display !== user.display_name || role !== user.role, [display, role, user]);
 
   const save = async () => {

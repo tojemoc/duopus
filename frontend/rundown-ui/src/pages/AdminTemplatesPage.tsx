@@ -21,11 +21,21 @@ type Slot = {
   beats: Beat[];
 };
 
+const VALID_BEAT_CATEGORIES = new Set<Beat["category"]>(["VO", "ILU", "SYN"]);
+
+function localYmd(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function makeBeatSeq(categories: string): Beat[] {
-  const cats = categories
+  const tokens = categories
     .split(/[,\s]+/)
     .map((s) => s.trim())
-    .filter(Boolean) as Array<Beat["category"]>;
+    .filter(Boolean);
+  const cats = tokens.filter((t): t is Beat["category"] => VALID_BEAT_CATEGORIES.has(t as Beat["category"]));
   return cats.map((c) => ({ id: crypto.randomUUID(), category: c, duration: 0, note: "" }));
 }
 
@@ -77,7 +87,7 @@ export function AdminTemplatesPage() {
         body: JSON.stringify({
           name,
           recurrence,
-          recurrence_day: recurrence === "weekly" ? (recDay === "" ? 0 : Number(recDay)) : null,
+          recurrence_day: recurrence === "weekly" ? (recDay === "" ? null : Number(recDay)) : null,
           auto_generate_days_ahead: ahead,
           slots,
         }),
@@ -261,7 +271,7 @@ export function AdminTemplatesPage() {
 function TemplateRow({ t, onChange }: { t: Template; onChange: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [dateStr, setDateStr] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateStr, setDateStr] = useState(() => localYmd());
 
   const gen = async () => {
     setBusy(true);

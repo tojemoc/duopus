@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, func, update
+from sqlalchemy import delete, func, or_, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -12,7 +11,7 @@ from auth import current_active_user
 from beat_utils import beats_to_json, planned_duration_from_beats
 from database import get_session
 from models import Rundown, Script, Story, User, utcnow
-from schemas import LockResult, StoryReorder, StoryUpdate
+from schemas import LockResult, ReadyUpdate, StoryReorder, StoryStatusUpdate, StoryUpdate
 
 router = APIRouter(prefix="/api", tags=["stories"])
 
@@ -41,14 +40,18 @@ async def patch_story(
 
     data = body.model_dump(exclude_unset=True)
     beats = data.pop("beats", None)
+
+    override_for_beats = s.planned_duration_override
+    if "planned_duration_override" in data:
+        override_for_beats = data["planned_duration_override"]
+
     if beats is not None:
         s.beats = beats_to_json(beats)
-        s.planned_duration = planned_duration_from_beats(s.beats, s.planned_duration_override)
+        s.planned_duration = planned_duration_from_beats(s.beats, override_for_beats)
 
     for k, v in data.items():
         setattr(s, k, v)
 
-    # Recompute planned_duration if override changed and beats have no durations.
     if "planned_duration_override" in data and beats is None:
         s.planned_duration = planned_duration_from_beats(s.beats, s.planned_duration_override)
 
@@ -66,15 +69,14 @@ async def patch_story(
 @router.patch("/stories/{story_id}/ready")
 async def set_ready(
     story_id: int,
-    body: dict,
+    body: ReadyUpdate,
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_session),
 ):
     s = await session.get(Story, story_id)
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
-    ready = bool(body.get("ready"))
-    s.ready = ready
+    s.ready = body.ready
     session.add(s)
     await session.commit()
     return {"ok": True, "ready": s.ready}
@@ -83,17 +85,14 @@ async def set_ready(
 @router.patch("/stories/{story_id}/status")
 async def set_status(
     story_id: int,
-    body: dict,
+    body: StoryStatusUpdate,
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_session),
 ):
     s = await session.get(Story, story_id)
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
-    status = body.get("status")
-    if status not in ("pending", "live", "done"):
-        raise HTTPException(status_code=400, detail="Invalid status")
-    s.status = status
+    s.status = body.status
     session.add(s)
     await session.commit()
     return {"ok": True, "status": s.status}
@@ -133,21 +132,40 @@ async def lock_story(
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
 
-    if s.locked_by and s.locked_by != user.id and not _lock_expired(s.locked_at):
-        other = await session.get(User, s.locked_by)
+    expiry_cutoff = utcnow() - timedelta(seconds=LOCK_TTL_SECONDS)
+    stmt = (
+        sa_update(Story)
+        .where(Story.id == story_id)
+        .where(
+            or_(
+                Story.locked_by.is_(None),
+                Story.locked_by == user.id,
+                Story.locked_at.is_(None),
+                Story.locked_at < expiry_cutoff,
+            )
+        )
+        .values(locked_by=user.id, locked_at=utcnow())
+    )
+    result = await session.execute(stmt)
+    await session.commit()
+
+    if result.rowcount == 1:
+        fresh = await session.get(Story, story_id)
+        assert fresh is not None
+        return LockResult(ok=True, locked_by=fresh.locked_by, locked_by_name=user.display_name, locked_at=fresh.locked_at)
+
+    fresh = await session.get(Story, story_id)
+    assert fresh is not None
+    if fresh.locked_by and fresh.locked_by != user.id and not _lock_expired(fresh.locked_at):
+        other = await session.get(User, fresh.locked_by)
         return LockResult(
             ok=False,
-            locked_by=s.locked_by,
+            locked_by=fresh.locked_by,
             locked_by_name=other.display_name if other else None,
-            locked_at=s.locked_at,
+            locked_at=fresh.locked_at,
         )
 
-    s.locked_by = user.id
-    s.locked_at = utcnow()
-    session.add(s)
-    await session.commit()
-    await session.refresh(s)
-    return LockResult(ok=True, locked_by=s.locked_by, locked_by_name=user.display_name, locked_at=s.locked_at)
+    return LockResult(ok=False, locked_by=fresh.locked_by, locked_by_name=None, locked_at=fresh.locked_at)
 
 
 @router.delete("/stories/{story_id}/lock", response_model=LockResult)

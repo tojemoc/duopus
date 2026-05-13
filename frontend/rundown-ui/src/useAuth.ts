@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "./api";
+import { ApiError, api } from "./api";
 
 export type Me = {
   id: number;
@@ -17,8 +17,10 @@ export function useAuth() {
     try {
       const u = await api<Me>("/api/auth/me");
       setMe(u);
-    } catch {
-      setMe(null);
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        setMe(null);
+      }
     } finally {
       setLoading(false);
     }

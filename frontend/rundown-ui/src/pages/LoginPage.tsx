@@ -72,10 +72,12 @@ export function LoginPage() {
           </button>
         </form>
 
-        <div className="mt-4 text-xs text-slate-500">
-          Seed admin: <span className="font-mono">admin@example.com</span> /{" "}
-          <span className="font-mono">duopus2025</span>
-        </div>
+        {import.meta.env.DEV && (
+          <div className="mt-4 text-xs text-slate-500">
+            Dev: default admin email is <span className="font-mono">admin@example.com</span>. If you start without{" "}
+            <span className="font-mono">ADMIN_PASSWORD</span>, check the server log for a generated password.
+          </div>
+        )}
       </div>
     </div>
   );

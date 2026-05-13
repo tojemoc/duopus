@@ -14,7 +14,7 @@ export type Story = {
   planned_duration: number;
   status: string;
   ready: boolean;
-  beats: string;
+  beats: Beat[];
   planned_duration_override: number | null;
   title_in: number;
   title_duration: number;

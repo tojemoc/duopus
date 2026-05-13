@@ -26,7 +26,7 @@ class RundownUpdate(BaseModel):
 class Beat(BaseModel):
     id: str
     category: Literal["VO", "ILU", "SYN"]
-    duration: int = 0
+    duration: int = Field(default=0, ge=0)
     note: str = ""
 
 
@@ -34,17 +34,25 @@ class StoryUpdate(BaseModel):
     position: int | None = None
     label: str | None = None
     segment: str | None = None
-    title_in: int | None = None
-    title_duration: int | None = None
+    title_in: int | None = Field(default=None, ge=0)
+    title_duration: int | None = Field(default=None, ge=0)
     beats: list[Beat] | None = None
-    planned_duration_override: int | None = None
+    planned_duration_override: int | None = Field(default=None, ge=0)
     ready: bool | None = None
     status: Literal["pending", "live", "done"] | None = None
 
 
+class ReadyUpdate(BaseModel):
+    ready: bool
+
+
+class StoryStatusUpdate(BaseModel):
+    status: Literal["pending", "live", "done"]
+
+
 class StoryReorderItem(BaseModel):
     id: int
-    position: int
+    position: int = Field(ge=0)
 
 
 class StoryReorder(BaseModel):
@@ -64,12 +72,12 @@ class ScriptUpdate(BaseModel):
 
 
 class TemplateSlotIn(BaseModel):
-    position: int
+    position: int = Field(ge=0)
     label: str
     segment: str
-    planned_duration: int = 0
-    title_in: int = 0
-    title_duration: int = 5
+    planned_duration: int = Field(default=0, ge=0)
+    title_in: int = Field(default=0, ge=0)
+    title_duration: int = Field(default=5, ge=0)
     notes: str = ""
     beats: list[Beat] = Field(default_factory=list)
 
@@ -77,16 +85,16 @@ class TemplateSlotIn(BaseModel):
 class TemplateIn(BaseModel):
     name: str
     recurrence: Literal["daily", "weekdays", "weekly"]
-    recurrence_day: int | None = None
-    auto_generate_days_ahead: int = 1
+    recurrence_day: int | None = Field(default=None, ge=0, le=6)
+    auto_generate_days_ahead: int = Field(default=1, ge=0)
     slots: list[TemplateSlotIn] = Field(default_factory=list)
 
 
 class TemplatePatch(BaseModel):
     name: str | None = None
     recurrence: Literal["daily", "weekdays", "weekly"] | None = None
-    recurrence_day: int | None = None
-    auto_generate_days_ahead: int | None = None
+    recurrence_day: int | None = Field(default=None, ge=0, le=6)
+    auto_generate_days_ahead: int | None = Field(default=None, ge=0)
     slots: list[TemplateSlotIn] | None = None
 
 

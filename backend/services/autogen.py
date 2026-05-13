@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime, time, timedelta, timezone
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, select
 
 from database import get_sessionmaker
@@ -31,8 +32,9 @@ async def autogen_once() -> None:
         templates = (await session.execute(select(Template).order_by(col(Template.id)))).scalars().all()
         for t in templates:
             days = max(0, int(t.auto_generate_days_ahead or 0))
+            base_date = datetime.now(timezone.utc).date()
             for i in range(days + 1):
-                d = date.today() + timedelta(days=i)
+                d = base_date + timedelta(days=i)
                 if not _should_generate(t, d):
                     continue
                 existing = (
@@ -40,7 +42,11 @@ async def autogen_once() -> None:
                 ).scalars().first()
                 if existing:
                     continue
-                await generate_rundown_from_template(session, template_id=t.id, show_date=d)
+                try:
+                    await generate_rundown_from_template(session, template_id=t.id, show_date=d)
+                except IntegrityError:
+                    await session.rollback()
+                    continue
 
 
 async def autogen_loop(stop: asyncio.Event, autogen_time_utc: str) -> None:
