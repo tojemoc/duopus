@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import Field, SQLModel
 
 
 def utcnow() -> datetime:
@@ -34,8 +34,6 @@ class Template(SQLModel, table=True):
     recurrence_day: int | None = None  # 0=Mon–6=Sun, only for weekly
     auto_generate_days_ahead: int = 1
 
-    slots: list["TemplateSlot"] = Relationship(back_populates="template")
-
 
 class TemplateSlot(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
@@ -49,8 +47,6 @@ class TemplateSlot(SQLModel, table=True):
     notes: str = ""
     beats: str = "[]"
 
-    template: Template | None = Relationship(back_populates="slots")
-
 
 class Rundown(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
@@ -59,8 +55,6 @@ class Rundown(SQLModel, table=True):
     show_date: date = Field(index=True)
     status: str = Field(default="preparing", index=True)  # preparing | live | done
     generated_at: datetime | None = None
-
-    stories: list["Story"] = Relationship(back_populates="rundown")
 
 
 class Story(SQLModel, table=True):
@@ -81,11 +75,7 @@ class Story(SQLModel, table=True):
     locked_by: int | None = Field(default=None, foreign_key="user.id", index=True)
     locked_at: datetime | None = None
 
-    rundown: Rundown | None = Relationship(back_populates="stories")
-    script: Optional["Script"] = Relationship(
-        back_populates="story",
-        sa_relationship_kwargs={"uselist": False},
-    )
+    # relationships intentionally omitted for SQLite-first Phase 1 simplicity
 
 
 class Script(SQLModel, table=True):
@@ -95,4 +85,4 @@ class Script(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
     updated_by: int | None = Field(default=None, foreign_key="user.id")
 
-    story: Story | None = Relationship(back_populates="script")
+    # relationships intentionally omitted for SQLite-first Phase 1 simplicity

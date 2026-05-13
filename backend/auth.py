@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from typing import AsyncGenerator
-
 from fastapi import Depends
 from fastapi_users import FastAPIUsers
 from fastapi_users.authentication import CookieTransport, AuthenticationBackend
-from fastapi_users.authentication.strategy.db import DatabaseStrategy
+from fastapi_users.authentication.strategy.jwt import JWTStrategy
 from models import User
 from user_manager import get_user_manager
 from user_db import get_user_db
@@ -15,8 +13,8 @@ cookie_transport = CookieTransport(cookie_name="duopus_session", cookie_max_age=
 
 
 def get_database_strategy(user_db=Depends(get_user_db)):
-    # Server-side session tokens stored in DB (no JWT).
-    return DatabaseStrategy(user_db)
+    # JWT stored in an HttpOnly cookie (keeps client UX session-like).
+    return JWTStrategy(secret=__import__("os").getenv("SECRET_KEY", "dev-secret-key"), lifetime_seconds=60 * 60 * 24 * 7)
 
 
 auth_backend = AuthenticationBackend(

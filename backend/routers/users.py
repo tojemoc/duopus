@@ -7,13 +7,19 @@ from models import User
 from permissions import require_admin
 from user_manager import UserManager, get_user_manager
 from user_schemas import UserCreate, UserRead, UserUpdate
+from database import get_session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 
 @router.get("", response_model=list[UserRead])
-async def list_users(_: User = Depends(require_admin), manager: UserManager = Depends(get_user_manager)):
-    return [u async for u in manager.user_db.get_all()]  # type: ignore[attr-defined]
+async def list_users(
+    _: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    return (await session.execute(select(User).order_by(col(User.id)))).scalars().all()
 
 
 @router.post("", response_model=UserRead)

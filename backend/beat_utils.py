@@ -6,8 +6,14 @@ from typing import Any
 from schemas import Beat
 
 
-def beats_to_json(beats: list[Beat]) -> str:
-    return json.dumps([b.model_dump() for b in beats], ensure_ascii=False)
+def beats_to_json(beats: list[Beat] | list[dict[str, Any]]) -> str:
+    out: list[dict[str, Any]] = []
+    for b in beats:
+        if isinstance(b, Beat):
+            out.append(b.model_dump())
+        elif isinstance(b, dict):
+            out.append(b)
+    return json.dumps(out, ensure_ascii=False)
 
 
 def beats_from_json(raw: str) -> list[Beat]:

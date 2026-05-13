@@ -5,21 +5,30 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from auth import current_active_user
 from database import get_session
 from models import Rundown, Script, Story
+from models import User
 from schemas import RundownCreate, RundownUpdate
 
 router = APIRouter(prefix="/api/rundowns", tags=["rundowns"])
 
 
 @router.get("")
-async def list_rundowns(session: AsyncSession = Depends(get_session)):
+async def list_rundowns(
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
     stmt = select(Rundown).order_by(col(Rundown.show_date).desc())
     return (await session.execute(stmt)).scalars().all()
 
 
 @router.post("")
-async def create_rundown(body: RundownCreate, session: AsyncSession = Depends(get_session)):
+async def create_rundown(
+    body: RundownCreate,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
     r = Rundown(template_id=body.template_id, title=body.title, show_date=body.show_date, status=body.status)
     session.add(r)
     await session.commit()
@@ -28,7 +37,11 @@ async def create_rundown(body: RundownCreate, session: AsyncSession = Depends(ge
 
 
 @router.get("/{rundown_id}")
-async def get_rundown(rundown_id: int, session: AsyncSession = Depends(get_session)):
+async def get_rundown(
+    rundown_id: int,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
     r = await session.get(Rundown, rundown_id)
     if not r:
         raise HTTPException(status_code=404, detail="Rundown not found")
@@ -36,7 +49,11 @@ async def get_rundown(rundown_id: int, session: AsyncSession = Depends(get_sessi
 
 
 @router.get("/{rundown_id}/full")
-async def get_rundown_full(rundown_id: int, session: AsyncSession = Depends(get_session)):
+async def get_rundown_full(
+    rundown_id: int,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
     r = await session.get(Rundown, rundown_id)
     if not r:
         raise HTTPException(status_code=404, detail="Rundown not found")
@@ -60,7 +77,12 @@ async def get_rundown_full(rundown_id: int, session: AsyncSession = Depends(get_
 
 
 @router.patch("/{rundown_id}")
-async def update_rundown(rundown_id: int, body: RundownUpdate, session: AsyncSession = Depends(get_session)):
+async def update_rundown(
+    rundown_id: int,
+    body: RundownUpdate,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
     r = await session.get(Rundown, rundown_id)
     if not r:
         raise HTTPException(status_code=404, detail="Rundown not found")
@@ -74,7 +96,11 @@ async def update_rundown(rundown_id: int, body: RundownUpdate, session: AsyncSes
 
 
 @router.delete("/{rundown_id}")
-async def delete_rundown(rundown_id: int, session: AsyncSession = Depends(get_session)):
+async def delete_rundown(
+    rundown_id: int,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
     r = await session.get(Rundown, rundown_id)
     if not r:
         raise HTTPException(status_code=404, detail="Rundown not found")

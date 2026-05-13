@@ -32,7 +32,7 @@ async def ensure_seed_data() -> None:
         manager = UserManager(user_db)
         try:
             await manager.create(
-                UserCreate(email="admin", password="duopus2025", display_name="Admin", role="admin"),
+                UserCreate(email="admin@example.com", password="duopus2025", display_name="Admin", role="admin"),
                 safe=False,
             )
         except UserAlreadyExists:
