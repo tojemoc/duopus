@@ -3,24 +3,37 @@ export type Rundown = {
   title: string;
   show_date: string;
   status: string;
-  created_at?: string;
+  template_id: number | null;
 };
 
 export type Story = {
-  id: string;
+  id: number;
   position: number;
-  title: string;
-  type: string;
+  label: string;
+  segment: string;
   planned_duration: number;
-  actual_duration: number | null;
-  vmix_input: number | null;
   status: string;
-  script_body?: string;
+  ready: boolean;
+  beats: string;
+  planned_duration_override: number | null;
+  title_in: number;
+  title_duration: number;
+  locked_by: number | null;
+  locked_at: string | null;
 };
 
-export type RundownSnapshot = {
-  active_rundown: { id: string; title: string; show_date: string; status: string } | null;
-  stories: Story[];
-  live_story: Story | null;
-  elapsed_seconds: number;
+export type BeatCategory = "VO" | "ILU" | "SYN";
+
+export type Beat = {
+  id: string;
+  category: BeatCategory;
+  duration: number;
+  note: string;
+};
+
+export type Script = {
+  story_id: number;
+  body: string;
+  updated_at: string;
+  updated_by: number | null;
 };
