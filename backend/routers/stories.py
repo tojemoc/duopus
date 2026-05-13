@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, func, select
 
 from database import get_session
+from deps import RundownEngineDep
 from models import Rundown, Script, Story, utcnow
 from schemas import ScriptUpdate, StoryCreate, StoryUpdate
 
@@ -120,9 +121,10 @@ def get_script(story_id: UUID, session: Session = Depends(get_session)):
 
 
 @router.put("/api/stories/{story_id}/script")
-def put_script(
+async def put_script(
     story_id: UUID,
     body: ScriptUpdate,
+    engine: RundownEngineDep,
     session: Session = Depends(get_session),
 ):
     s = session.get(Story, story_id)
@@ -138,4 +140,5 @@ def put_script(
         session.add(sc)
     session.commit()
     session.refresh(sc)
+    await engine.broadcast_snapshot()
     return {"story_id": str(story_id), "body": sc.body, "updated_at": sc.updated_at.isoformat()}

@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 
 type Story = {
   id: string;
+  position: number;
   title: string;
   status: string;
+  type: string;
   planned_duration: number;
   script_body?: string;
 };
@@ -35,18 +37,34 @@ function fmtMmSs(totalSec: number) {
   return `${m.toString().padStart(2, "0")}:${r.toString().padStart(2, "0")}`;
 }
 
+/** Avoid React state for script/title so live edits do not re-render the scroll column (scroll jitter). */
+function applyIfChanged(
+  el: HTMLElement | null,
+  prevSig: { current: string | null },
+  nextSig: string,
+  text: string,
+) {
+  if (!el || prevSig.current === nextSig) return;
+  prevSig.current = nextSig;
+  el.textContent = text;
+}
+
 export default function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scriptElRef = useRef<HTMLDivElement>(null);
+  const titleElRef = useRef<HTMLDivElement>(null);
   const velocityRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const elapsedBaseRef = useRef(0);
   const wallAtRef = useRef(performance.now());
   const plannedRef = useRef(0);
   const timeElRef = useRef<HTMLDivElement>(null);
-  const [mirror, setMirror] = useState<Mirror>("normal");
-  const [title, setTitle] = useState("");
-  const [script, setScript] = useState("Waiting for rundown…");
+  const scriptSigRef = useRef<string | null>(null);
+  const titleSigRef = useRef<string | null>(null);
   const lastStoryId = useRef<string | null>(null);
+
+  const [mirror, setMirror] = useState<Mirror>("normal");
+  const [stories, setStories] = useState<Story[]>([]);
 
   useEffect(() => {
     const tick = () => {
@@ -90,25 +108,40 @@ export default function App() {
       const msg = JSON.parse(ev.data as string);
       if (msg.type === "bootstrap" || msg.type === "rundown") {
         const snap = (msg.type === "bootstrap" ? msg.rundown : msg.payload) as Snap;
+        setStories(Array.isArray(snap.stories) ? snap.stories : []);
         const live = snap.live_story;
         const sid = live?.id ?? null;
         if (sid && sid !== lastStoryId.current) {
           lastStoryId.current = sid;
           velocityRef.current = 0;
           if (scrollRef.current) scrollRef.current.scrollTop = 0;
-          setScript(live?.script_body || "");
-          setTitle(live?.title || "");
+          scriptSigRef.current = null;
+          titleSigRef.current = null;
+          applyIfChanged(
+            scriptElRef.current,
+            scriptSigRef,
+            `${sid}\n${live?.script_body ?? ""}`,
+            live?.script_body || "",
+          );
+          applyIfChanged(titleElRef.current, titleSigRef, `${sid}\n${live?.title ?? ""}`, live?.title || "");
           plannedRef.current = live?.planned_duration || 0;
         } else if (live) {
-          setScript(live.script_body || "");
-          setTitle(live.title);
+          applyIfChanged(
+            scriptElRef.current,
+            scriptSigRef,
+            `${live.id}\n${live.script_body ?? ""}`,
+            live.script_body || "",
+          );
+          applyIfChanged(titleElRef.current, titleSigRef, `${live.id}\n${live.title}`, live.title);
           plannedRef.current = live.planned_duration || 0;
         } else {
           lastStoryId.current = null;
           velocityRef.current = 0;
           if (scrollRef.current) scrollRef.current.scrollTop = 0;
-          setScript("Waiting for rundown…");
-          setTitle("");
+          scriptSigRef.current = null;
+          titleSigRef.current = null;
+          applyIfChanged(scriptElRef.current, scriptSigRef, "__idle__", "Waiting for rundown…");
+          applyIfChanged(titleElRef.current, titleSigRef, "__idle__", "");
           plannedRef.current = 0;
         }
         elapsedBaseRef.current = snap.elapsed_seconds || 0;
@@ -118,6 +151,8 @@ export default function App() {
     return () => ws.close();
   }, []);
 
+  const liveId = stories.find((s) => s.status === "live")?.id ?? null;
+
   return (
     <>
       <style>{`
@@ -125,30 +160,52 @@ export default function App() {
         .mirror-v { transform: scaleY(-1); }
         .mirror-hv { transform: scale(-1, -1); }
       `}</style>
-      <div className="hud">
-        <div>
-          <div>
-            <strong>{title || "—"}</strong>
+      <div className="layout">
+        <aside className="segments" aria-label="Rundown segments">
+          {stories.length === 0 ? (
+            <div className="segments-empty">No rundown loaded</div>
+          ) : (
+            stories.map((s) => (
+              <div
+                key={s.id}
+                className={
+                  "seg" +
+                  (s.id === liveId ? " seg-live" : "") +
+                  (s.status === "done" ? " seg-done" : "")
+                }
+              >
+                <span className="seg-pos">{s.position}</span>
+                <span className="seg-title">{s.title}</span>
+                <span className="seg-meta">{s.type}</span>
+              </div>
+            ))
+          )}
+        </aside>
+        <div className="main-col">
+          <div className="hud">
+            <div>
+              <div>
+                <strong ref={titleElRef}>—</strong>
+              </div>
+              <div ref={timeElRef}>Elapsed 00:00 · Remaining 00:00</div>
+            </div>
+            <div className="controls">
+              {(["normal", "h", "v", "hv"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={mirror === m ? "active" : ""}
+                  onClick={() => setMirror(m)}
+                >
+                  {m === "normal" ? "Normal" : m === "h" ? "Mirror H" : m === "v" ? "Mirror V" : "Mirror HV"}
+                </button>
+              ))}
+            </div>
           </div>
-          <div ref={timeElRef}>
-            Elapsed 00:00 · Remaining 00:00
+          <div ref={scrollRef} className={`scroll-wrap ${mirrorClass[mirror]}`}>
+            <div ref={scriptElRef} className="script" />
           </div>
         </div>
-        <div className="controls">
-          {(["normal", "h", "v", "hv"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              className={mirror === m ? "active" : ""}
-              onClick={() => setMirror(m)}
-            >
-              {m === "normal" ? "Normal" : m === "h" ? "Mirror H" : m === "v" ? "Mirror V" : "Mirror HV"}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div ref={scrollRef} className={`scroll-wrap ${mirrorClass[mirror]}`}>
-        <div className="script">{script}</div>
       </div>
     </>
   );
