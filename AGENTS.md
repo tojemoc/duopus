@@ -1,36 +1,31 @@
 # AGENTS.md
 
-## Duopus NRCS
+## Duopus NRCS — agent instructions
 
-Docker Compose brings up PostgreSQL 16, Redis 7, the FastAPI backend (with Alembic migrations on startup), and nginx (static `rundown-ui` at `/`, `prompter` at `/prompter/`, proxy `/api` and `/ws` to the backend).
+**Single source of truth for product scope:** [`docs/PHASE1.md`](docs/PHASE1.md). Implement only what that document describes for Phase 1. Treat everything listed under *Out of scope* as intentionally absent from the repo unless the brief is updated.
 
-Copy `.env.example` to `.env` if you want to override defaults locally. Compose sets `POSTGRES_URL`, `REDIS_URL`, and `VMIX_HOST` via the `environment` block; adjust `VMIX_HOST` to your vMix machine’s LAN IP.
+### Stack (Phase 1)
+
+- **Backend:** Python 3.12, FastAPI, SQLModel, **SQLite** (`DATABASE_URL`). Dependencies and lockfile live under `backend/` (`pyproject.toml`, `uv.lock`). Schema is created with **`SQLModel.metadata.create_all`** (no Alembic in this phase).
+- **Frontend:** `frontend/rundown-ui` and `frontend/prompter` — local dev with Vite (`npm run dev`). There is **no** Docker Compose or bundled nginx in Phase 1; run the API and Vite dev servers separately.
 
 ### Commands
 
 **Backend (from `backend/`)**
 
-Install [uv](https://docs.astral.sh/uv/) once (see upstream install instructions), then:
+Install [uv](https://docs.astral.sh/uv/), then:
 
-- `uv sync --extra dev` — create `.venv` and install dependencies from `uv.lock` (omit `--extra dev` for runtime-only installs)
-- `uv run pytest` — run tests (vMix tally parsing + rundown engine DB logic)
-- `uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000` — local API (requires Postgres + Redis + env)
+- `uv sync --extra dev` — create `.venv` and install from `uv.lock`
+- `uv run pytest` — tests
+- `uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000` — API (needs `SECRET_KEY` in the environment or `.env`)
 
-After changing dependencies in `pyproject.toml`, run `uv lock` and commit the updated `uv.lock`.
-
-**Database migrations**
-
-- `POSTGRES_URL=... uv run alembic upgrade head` — apply migrations (also runs automatically in the backend container entrypoint)
+After changing dependencies in `pyproject.toml`, run `uv lock` and commit `uv.lock`.
 
 **Frontends**
 
-- `cd frontend/rundown-ui && npm install && npm run build`
-- `cd frontend/prompter && npm install && npm run build`
+- `cd frontend/rundown-ui && npm install && npm run dev`
+- `cd frontend/prompter && npm install && npm run dev` — prompter handoff view (`/prompter/:storyId`); polls the API as described in `docs/PHASE1.md`
 
-**Companion module**
+### Default dev login
 
-- `cd companion-module && npm install && node --check src/index.js`
-
-**Docker**
-
-- `docker compose build` then `docker compose up` from the repo root (requires Docker).
+See **Seed data** in `docs/PHASE1.md` (admin user and password for local development).
