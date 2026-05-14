@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: duopus
+      POSTGRES_PASSWORD: ci
+      POSTGRES_DB: duopus
+      # Required by compose for the backend service; used by Alembic when the full stack runs.
+      POSTGRES_URL: postgresql+psycopg://duopus:ci@db:5432/duopus
+      SECRET_KEY: ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Compose images
+        run: docker compose build
+
+      - name: Run backend tests (backend image)
+        run: docker compose run --rm --no-deps backend python -m pytest
