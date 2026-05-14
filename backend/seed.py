@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import secrets
 from datetime import date, datetime, timezone
 from uuid import uuid4
 
@@ -46,8 +45,9 @@ async def ensure_seed_data() -> None:
                 admin_pw = settings.admin_password
                 generated_pw = None
             else:
-                admin_pw = secrets.token_urlsafe(16)
-                generated_pw = admin_pw
+                # Phase 1 default dev login (see docs/PHASE1.md); override with ADMIN_PASSWORD.
+                admin_pw = "duopus2025"
+                generated_pw = None
 
         try:
             await manager.create(
