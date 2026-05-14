@@ -1,27 +1,36 @@
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 
-from sqlmodel import Session, SQLModel, create_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlmodel import SQLModel
 
 from config import get_settings
 
-_engine = None
+_engine: AsyncEngine | None = None
+_sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
-def get_engine():
-    global _engine
+def get_engine() -> AsyncEngine:
+    global _engine, _sessionmaker
     if _engine is None:
-        _engine = create_engine(
-            get_settings().postgres_url,
-            echo=False,
-            pool_pre_ping=True,
-        )
+        settings = get_settings()
+        _engine = create_async_engine(settings.database_url, echo=False)
+        _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine
 
 
-def init_db() -> None:
-    SQLModel.metadata.create_all(get_engine())
+def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    get_engine()
+    assert _sessionmaker is not None
+    return _sessionmaker
 
 
-def get_session() -> Generator[Session, None, None]:
-    with Session(get_engine()) as session:
+async def init_db() -> None:
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    SessionMaker = get_sessionmaker()
+    async with SessionMaker() as session:
         yield session

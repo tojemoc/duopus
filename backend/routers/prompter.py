@@ -1,38 +1,35 @@
-import json
+from __future__ import annotations
 
-import redis.asyncio as aioredis
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
-from schemas import PrompterSpeedBody
+from auth import current_active_user
+from beat_utils import beats_from_json
+from database import get_session
+from models import Script, Story, User, utcnow
+from schemas import PrompterPollResponse
 
 router = APIRouter(prefix="/api/prompter", tags=["prompter"])
 
-SPEED_KEY = "duopus:prompter_speed_level"
-SPEED_CHANNEL = "prompter:speed"
-_MIN, _MAX = -20, 20
-_LUA_SET_SPEED = r"""
-local key = KEYS[1]
-local delta = tonumber(ARGV[1]) or 0
-local minv = tonumber(ARGV[2])
-local maxv = tonumber(ARGV[3])
-local raw = redis.call('GET', key)
-local cur = tonumber(raw)
-if cur == nil then cur = 0 end
-local nextv = cur + delta
-if nextv < minv then nextv = minv end
-if nextv > maxv then nextv = maxv end
-redis.call('SET', key, tostring(nextv))
-return nextv
-"""
 
-
-@router.post("/speed")
-async def set_prompter_speed(request: Request, body: PrompterSpeedBody):
-    delta = body.delta
-    r: aioredis.Redis = request.app.state.redis_client
-    level = int(await r.eval(_LUA_SET_SPEED, 1, SPEED_KEY, int(delta), _MIN, _MAX))
-    msg = json.dumps({"delta": delta, "level": level})
-    await r.publish(SPEED_CHANNEL, msg)
-    hub = request.app.state.ws_hub
-    await hub.broadcast({"type": "prompter_speed", "payload": json.loads(msg)})
-    return {"ok": True, "level": level}
+@router.get("/{story_id}", response_model=PrompterPollResponse)
+async def poll_prompter(
+    story_id: int,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
+    s = await session.get(Story, story_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Story not found")
+    sc = (await session.execute(select(Script).where(Script.story_id == story_id))).scalars().first()
+    body = sc.body if sc else ""
+    updated_at = sc.updated_at if sc else (s.locked_at or utcnow())
+    return PrompterPollResponse(
+        story_id=story_id,
+        label=s.label,
+        segment=s.segment,
+        beats=beats_from_json(s.beats),
+        body=body,
+        updated_at=updated_at,
+    )

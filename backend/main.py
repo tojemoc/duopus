@@ -1,80 +1,65 @@
+import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
-import redis.asyncio as aioredis
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
-from database import get_engine
-from routers import prompter, rundown_ops, rundowns, stories, vmix
-from services.rundown_engine import RundownEngine
-from services.vmix_bridge import VmixBridge
-from ws.hub import WebSocketHub, websocket_endpoint
+from database import init_db
+from routers import auth_routes, prompter, rundowns, scripts, stories, templates, users
+from seed import ensure_seed_data
+from services.autogen import autogen_loop
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 
+def _validate_cors(origins: list[str], allow_credentials: bool) -> None:
+    if allow_credentials and any(o == "*" for o in origins):
+        raise ValueError("Invalid CORS configuration: allow_credentials=True cannot be combined with wildcard origins")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    get_engine()
-    app.state.redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
-    bridge = VmixBridge(host=settings.vmix_host, port=settings.vmix_port, redis_url=settings.redis_url)
-    engine = RundownEngine(redis_url=settings.redis_url)
-    hub = WebSocketHub(redis_url=settings.redis_url)
-    app.state.vmix_bridge = bridge
-    app.state.rundown_engine = engine
-    app.state.ws_hub = hub
+    await init_db()
+    await ensure_seed_data()
 
-    started_hub = False
-    started_bridge = False
-    started_engine = False
+    stop = asyncio.Event()
+    task = asyncio.create_task(autogen_loop(stop, autogen_time_utc=settings.autogen_time_utc))
     try:
-        await hub.start()
-        started_hub = True
-        await bridge.start()
-        started_bridge = True
-        await engine.start()
-        started_engine = True
-        log.info("Duopus backend started (vMix host=%s)", settings.vmix_host)
         yield
     finally:
-        if started_engine:
-            await engine.stop()
-        if started_bridge:
-            await bridge.stop()
-        if started_hub:
-            await hub.stop()
-        await app.state.redis_client.aclose()
+        stop.set()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
-app = FastAPI(title="Duopus NRCS", lifespan=lifespan)
+app = FastAPI(title="Duopus NRCS (Phase 1)", lifespan=lifespan)
+settings = get_settings()
+origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+resolved_origins = origins or ["http://localhost:5173"]
+_validate_cors(resolved_origins, allow_credentials=True)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=resolved_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(auth_routes.router)
+app.include_router(users.router)
+app.include_router(templates.router)
 app.include_router(rundowns.router)
 app.include_router(stories.router)
-app.include_router(vmix.router)
-app.include_router(rundown_ops.router)
+app.include_router(scripts.router)
 app.include_router(prompter.router)
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
-
-@app.websocket("/ws")
-async def ws_route(websocket: WebSocket):
-    client = websocket.query_params.get("client")
-    hub: WebSocketHub = websocket.app.state.ws_hub
-    bridge = websocket.app.state.vmix_bridge
-    engine = websocket.app.state.rundown_engine
-    await websocket_endpoint(hub, bridge, engine, websocket, client=client)
