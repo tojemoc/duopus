@@ -26,6 +26,8 @@ async def reorder_stories(
     rd = await session.get(Rundown, body.rundown_id)
     if not rd:
         raise HTTPException(status_code=404, detail="Rundown not found")
+    if not body.items:
+        raise HTTPException(status_code=400, detail="No stories to reorder")
     ids = [it.id for it in body.items]
     if len(ids) != len(set(ids)):
         raise HTTPException(status_code=400, detail="Duplicate story ids in reorder request")
@@ -38,6 +40,19 @@ async def reorder_stories(
     by_id = {s.id: s for s in rows}
     if len(by_id) != len(ids):
         raise HTTPException(status_code=400, detail="One or more stories were not found in this rundown")
+
+    requested_positions = {it.position for it in body.items}
+    other_pos_rows = await session.execute(
+        select(Story.position).where(Story.rundown_id == body.rundown_id, col(Story.id).not_in(ids))
+    )
+    occupied_by_others = set(other_pos_rows.scalars().all())
+    overlap = requested_positions & occupied_by_others
+    if overlap:
+        raise HTTPException(
+            status_code=400,
+            detail="One or more target positions are still used by other stories in this rundown. Include those stories in the reorder or pick positions that are not in use.",
+        )
+
     max_pos = (
         await session.execute(select(func.max(Story.position)).where(Story.rundown_id == body.rundown_id))
     ).scalar_one_or_none()
@@ -70,8 +85,26 @@ async def patch_story(
     if not s:
         raise HTTPException(status_code=404, detail="Story not found")
 
-    if s.locked_by and s.locked_by != user.id and not lock_expired(s.locked_at):
+    expiry_cutoff = utcnow() - timedelta(seconds=LOCK_TTL_SECONDS)
+    claim = (
+        sa_update(Story)
+        .where(Story.id == story_id)
+        .where(
+            or_(
+                Story.locked_by.is_(None),
+                Story.locked_by == user.id,
+                Story.locked_at.is_(None),
+                Story.locked_at < expiry_cutoff,
+            )
+        )
+        .values(locked_by=user.id, locked_at=utcnow())
+    )
+    claim_result = await session.execute(claim)
+    if claim_result.rowcount != 1:
+        await session.rollback()
         raise HTTPException(status_code=400, detail="Being edited by another user")
+
+    await session.refresh(s)
 
     data = body.model_dump(exclude_unset=True)
     beats = data.pop("beats", None)
@@ -90,12 +123,13 @@ async def patch_story(
     if "planned_duration_override" in data and beats is None:
         s.planned_duration = planned_duration_from_beats(s.beats, s.planned_duration_override)
 
-    # Release lock on save
-    if s.locked_by == user.id:
-        s.locked_by = None
-        s.locked_at = None
-
     session.add(s)
+    await session.flush()
+    await session.execute(
+        sa_update(Story)
+        .where(Story.id == story_id, Story.locked_by == user.id)
+        .values(locked_by=None, locked_at=None)
+    )
     await session.commit()
     await session.refresh(s)
     return s
