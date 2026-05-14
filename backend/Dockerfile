@@ -12,6 +12,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY . .
 
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid 1000 --shell /usr/sbin/nologin --no-create-home app \
+    && chown -R app:app /app
+
+USER app
+
 EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
