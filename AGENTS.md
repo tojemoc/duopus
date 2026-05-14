@@ -4,7 +4,11 @@
 
 Docker Compose brings up PostgreSQL 16, Redis 7, the FastAPI backend (with Alembic migrations on startup), and nginx (static `rundown-ui` at `/`, `prompter` at `/prompter/`, proxy `/api` and `/ws` to the backend).
 
-Copy `.env.example` to `.env` if you want to override defaults locally. Compose sets `POSTGRES_URL`, `REDIS_URL`, and `VMIX_HOST` via the `environment` block; adjust `VMIX_HOST` to your vMix machine’s LAN IP.
+Prebuilt **backend** and **nginx** images are published to GHCR on every push to `main` (workflow `Publish GHCR images`). Compose defaults to `ghcr.io/tojemoc/duopus-backend:latest` and `ghcr.io/tojemoc/duopus-nginx:latest`; override with `DUOPUS_BACKEND_IMAGE` / `DUOPUS_NGINX_IMAGE` (see `.env.example`). Until the first publish succeeds, run `docker compose build` locally. Forks typically keep `build:` and override those image variables to their own registry.
+
+Copy `.env.example` to `.env` if you want to override defaults locally. Postgres credentials, `POSTGRES_URL`, and `SECRET_KEY` are resolved at **container runtime** from your environment or `.env` (Compose interpolation); committed defaults are for local development only—change them for shared or production hosts. Adjust `VMIX_HOST` to your vMix machine’s LAN IP.
+
+**GHCR trade-offs:** `latest` can change without notice (pin a digest or SHA tag for reproducible deploys). New packages may default to private visibility—set the package to public if you need anonymous `docker pull`. Pulling third-party images means you trust the publisher’s build; building from source (`docker compose build`) avoids that but costs build time.
 
 ### Commands
 
