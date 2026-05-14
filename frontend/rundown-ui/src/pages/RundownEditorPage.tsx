@@ -288,15 +288,6 @@ export function RundownEditorPage() {
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex justify-end gap-2">
-                      <a
-                        className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs hover:bg-slate-50"
-                        href={`/prompter/${s.id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="Open prompter"
-                      >
-                        Prompter
-                      </a>
                       <button
                         type="button"
                         className="rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"

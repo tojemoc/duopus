@@ -2,7 +2,7 @@
 
 ## Duopus NRCS
 
-Docker Compose brings up PostgreSQL 16, Redis 7, the FastAPI backend (with Alembic migrations on startup), and nginx (static `rundown-ui` at `/`, `prompter` at `/prompter/`, proxy `/api` and `/ws` to the backend).
+Docker Compose brings up PostgreSQL 16, Redis 7, the FastAPI backend (with Alembic migrations on startup), and nginx (static `rundown-ui` at `/`, proxy `/api` and `/ws` to the backend). The `frontend/prompter` app is not built into the nginx image; run it separately (for example `npm run dev` in that folder) if you need it.
 
 Copy `.env.example` to `.env` if you want to override defaults locally. Compose sets `POSTGRES_URL`, `REDIS_URL`, and `VMIX_HOST` via the `environment` block; adjust `VMIX_HOST` to your vMix machine’s LAN IP.
 
@@ -20,8 +20,8 @@ Copy `.env.example` to `.env` if you want to override defaults locally. Compose 
 
 **Frontends**
 
-- `cd frontend/rundown-ui && npm install && npm run build`
-- `cd frontend/prompter && npm install && npm run build`
+- `cd frontend/rundown-ui && npm install && npm run build` — bundled into the Docker nginx image
+- `cd frontend/prompter && npm install && npm run dev` — local development only (not served by Compose nginx)
 
 **Companion module**
 
