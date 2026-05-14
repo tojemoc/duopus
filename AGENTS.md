@@ -7,7 +7,7 @@
 ### Stack (Phase 1)
 
 - **Backend:** Python 3.12, FastAPI, SQLModel, **SQLite** (`DATABASE_URL`). Dependencies and lockfile live under `backend/` (`pyproject.toml`, `uv.lock`). Schema is created with **`SQLModel.metadata.create_all`** (no Alembic in this phase).
-- **Frontend:** `frontend/rundown-ui` and `frontend/prompter` — local dev with Vite (`npm run dev`). There is **no** Docker Compose or bundled nginx in Phase 1; run the API and Vite dev servers separately.
+- **Frontend:** `frontend/rundown-ui` and `frontend/prompter` — local dev with Vite (`npm run dev`). For a **one-command dev/smoke-test stack**, use Docker Compose from the repo root (see below); otherwise run the API and Vite dev servers separately.
 
 ### Commands
 
@@ -25,6 +25,11 @@ After changing dependencies in `pyproject.toml`, run `uv lock` and commit `uv.lo
 
 - `cd frontend/rundown-ui && npm install && npm run dev`
 - `cd frontend/prompter && npm install && npm run dev` — prompter handoff view (`/prompter/:storyId`); polls the API as described in `docs/PHASE1.md`
+
+**Docker Compose (optional, dev / smoke testing)**
+
+- Copy `.env.docker.example` to `.env.docker` (gitignored) and set at least `SECRET_KEY`; add or change any API env vars there (same semantics as `.env` for the backend).
+- From the repo root: `docker compose up --build` — builds `backend/Dockerfile`, runs API on **8000**, rundown UI on **5173**, prompter on **5174**. SQLite uses the `duopus-sqlite` volume; see `docs/PHASE1.md` for rationale and Vite proxy details (`DUOPUS_API_PROXY`).
 
 ### Default dev login
 

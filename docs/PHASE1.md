@@ -17,7 +17,6 @@ Phase 1 is a **self-contained, locally-runnable web app**. No broadcast integrat
 - WebSockets or Redis  
 - CasparCG or vMix integration  
 - Companion / Streamdeck module  
-- Docker / docker-compose (no containerized stack in this phase)  
 - Alembic migrations (**SQLModel `create_all` is sufficient**)  
 - Prompter scroll velocity / mirror flip modes (use QPrompt externally)  
 - Auth beyond simple **session-based** login (FastAPI-Users with cookies; no JWT complexity)
@@ -211,10 +210,22 @@ Prompter polling (handoff to QPrompt): **`GET /api/prompter/{story_id}`** — la
 
 ---
 
-## Running locally (no Docker)
+## Running locally
+
+### Without Docker (default)
 
 1. **Backend:** from `backend/`, `uv sync --extra dev`, set `SECRET_KEY` (and optional `DATABASE_URL`), then `uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000`.  
 2. **Rundown UI:** `frontend/rundown-ui` — `npm install` && `npm run dev` (Vite proxies `/api` to the backend per `vite.config`).  
 3. **Prompter:** `frontend/prompter` — `npm run dev` on a second port if needed; configure API origin as in Vite config.  
 
 `CORS_ORIGINS` in `.env` must include the Vite dev origin (e.g. `http://localhost:5173`).
+
+### Optional Docker Compose (dev / smoke testing)
+
+The repo includes a **non-production** Compose stack for manual testing: API on port **8000**, rundown UI on **5173**, prompter on **5174**. It is **not** part of the Phase 1 product scope beyond convenience for developers and agents; behaviour matches the local stack above.
+
+1. Copy **`.env.docker.example`** to **`.env.docker`** (gitignored) and set **`SECRET_KEY`** and any other variables you need. All API-related env vars for the container are read from `.env.docker` so you can tune `DATABASE_URL`, `CORS_ORIGINS`, `ADMIN_PASSWORD`, etc., without touching the compose file.  
+2. From the repo root: **`docker compose up --build`**.  
+3. SQLite data is stored on the named volume **`duopus-sqlite`** (path inside the API container is whatever `DATABASE_URL` points to; the example uses `/data/duopus.db` on that volume).
+
+Vite dev servers in Compose proxy `/api` to the **`api`** service via the **`DUOPUS_API_PROXY`** environment variable (`http://api:8000`). For local (non-Docker) Vite, the default proxy remains `http://127.0.0.1:8000`.
