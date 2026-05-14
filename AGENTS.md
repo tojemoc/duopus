@@ -10,13 +10,17 @@ Copy `.env.example` to `.env` if you want to override defaults locally. Compose 
 
 **Backend (from `backend/`)**
 
-- `python3 -m pip install -r requirements.txt` — install dependencies
-- `python3 -m pytest` — run tests (vMix tally parsing + rundown engine DB logic)
-- `python3 -m uvicorn main:app --reload --host 0.0.0.0 --port 8000` — local API (requires Postgres + Redis + env)
+Install [uv](https://docs.astral.sh/uv/) once (see upstream install instructions), then:
+
+- `uv sync --extra dev` — create `.venv` and install dependencies from `uv.lock` (omit `--extra dev` for runtime-only installs)
+- `uv run pytest` — run tests (vMix tally parsing + rundown engine DB logic)
+- `uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000` — local API (requires Postgres + Redis + env)
+
+After changing dependencies in `pyproject.toml`, run `uv lock` and commit the updated `uv.lock`.
 
 **Database migrations**
 
-- `POSTGRES_URL=... python3 -m alembic upgrade head` — apply migrations (also runs automatically in the backend container entrypoint)
+- `POSTGRES_URL=... uv run alembic upgrade head` — apply migrations (also runs automatically in the backend container entrypoint)
 
 **Frontends**
 
